@@ -2,7 +2,7 @@
 ## based on the synpp package
 
 # This is the path to a directory where the pipeline can store temporary data
-working_directory: /set/your/path/to/cache
+working_directory: cache
 
 # This section defines which parts of the pipeline should be run
 run:
@@ -22,12 +22,14 @@ config:
   random_seed: 1234
  
   # Paths to the input data and where the output should be stored
-  data_path: /set/your/path/to/data
-  output_path: /set/your/path/to/output
+  data_path: data
+  output_path: output
   output_prefix: bavaria_1pct_
 
   # Only interesting if you run the simulation
-  java_memory: 12G
+  java_memory: 10G
+  osmosis_binary: /mnt/Shared/Code/projects/bavaria/tools/osmosis/osmosis-0.49.2/bin/osmosis
+  osmconvert_binary: /mnt/Shared/Code/projects/bavaria/tools/osmconvert
 
   # Defaults for Bavaria
   home_location_sampling: weighted
@@ -36,9 +38,12 @@ config:
 
   gtfs_path: gtfs
   osm_path: osm
+  
+  # Filter OSM data to reduce memory usage (exclude minor paths)
+  osm_highways: motorway,trunk,primary,secondary,tertiary,unclassified,residential,motorway_link,trunk_link,primary_link,secondary_link,tertiary_link,living_street,service,pedestrian,cycleway,footway,steps,track,path
 
   # Activate if only certain "Bezirk" should be generated
-  # bavaria.political_prefix: ["091", "092", "097"] # Oberbayern, Niederbayern, Schwaben
+  bavaria.political_prefix: ["09162"] # Munich City (München, Stadt)
 
 # Overrides for the bavaria pipeline compared to the Île-de-France pipeline
 aliases:
