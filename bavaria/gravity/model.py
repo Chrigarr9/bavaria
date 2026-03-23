@@ -228,8 +228,16 @@ def build_gemeinde_constrained_matrix(municipalities, df_employees, df_distances
         top10_total = known_cross_total + outside_count  # all top-10 (within + outside)
 
         if total_auspendler is not None and origin in total_auspendler:
-            # Exact: gravity fill = total Auspendler - top-10 sum
-            gravity_fill_total = max(0, total_auspendler[origin] - top10_total)
+            # Exact remaining = total Auspendler - top-10 sum
+            remaining = max(0, total_auspendler[origin] - top10_total)
+            # Split remaining proportionally: the tail likely has similar
+            # within/outside ratio as the top-10
+            if top10_total > 0:
+                within_ratio = known_cross_total / top10_total
+            else:
+                within_ratio = 0.5
+            gravity_fill_total = remaining * within_ratio
+            outside_count += remaining * (1 - within_ratio)  # add tail's outside portion
         else:
             # Heuristic fallback: top-10 captures ~73% of Auspendler
             gravity_fill_total = known_cross_total * 0.37
