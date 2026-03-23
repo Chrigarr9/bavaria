@@ -1,5 +1,7 @@
 import data.osm.osmosis
-import os, os.path, gzip
+import os
+import os.path
+import gzip
 import shapely.geometry as geo
 import glob
 
@@ -18,6 +20,7 @@ MATSim converter to work with the data.
 Additionally, the stage cuts the OSM data to the requested region of the pipeline.
 """
 
+
 def configure(context):
     context.config("data_path")
     context.config("osm_path", "osm_idf")
@@ -28,11 +31,12 @@ def configure(context):
     context.stage("data.osm.osmosis")
     context.stage("data.spatial.municipalities")
 
-def write_poly(df, path, geometry_column = "geometry"):
+
+def write_poly(df, path, geometry_column="geometry"):
     df = df.to_crs("EPSG:4326")
 
     df["aggregate"] = 0
-    area = df.dissolve(by = "aggregate")[geometry_column].values[0]
+    area = df.dissolve(by="aggregate")[geometry_column].values[0]
 
     if not hasattr(area, "exterior"):
         print("Selected area is not connected -> Using convex hull.")
@@ -51,9 +55,11 @@ def write_poly(df, path, geometry_column = "geometry"):
     with open(path, "w+") as f:
         f.write("\n".join(data))
 
+
 def execute(context):
-    input_files = get_input_files("{}/{}".format(context.config("data_path"), context.config("osm_path")))
-    
+    input_files = get_input_files(
+        "{}/{}".format(context.config("data_path"), context.config("osm_path")))
+
     # Prepare bounding area
     df_area = context.stage("data.spatial.municipalities")
     write_poly(df_area, "%s/boundary.poly" % context.path())
@@ -71,10 +77,10 @@ def execute(context):
         absolute_path = os.path.abspath(path)
 
         data.osm.osmosis.run(context, [
-            "--read-%s" % mode, absolute_path,
+            "--read-%s" % mode, "file=%s" % absolute_path,
             "--tag-filter", "accept-ways", "highway=%s" % highway_tags, "railway=%s" % railway_tags,
             "--bounding-polygon", "file=%s/boundary.poly" % context.path(), "completeWays=yes",
-            "--write-pbf", "filtered_%d.osm.pbf" % index
+            "--write-pbf", "file=filtered_%d.osm.pbf" % index
         ])
 
     # Merge filtered files if there are multiple ones
@@ -82,12 +88,12 @@ def execute(context):
 
     command = []
     for index in range(len(input_files)):
-        command += ["--read-pbf", "filtered_%d.osm.pbf" % index]
+        command += ["--read-pbf", "file=filtered_%d.osm.pbf" % index]
 
     for index in range(len(input_files) - 1):
         command += ["--merge"]
 
-    command += ["--write-xml", "compressionMethod=gzip", "output.osm.gz"]
+    command += ["--write-xml", "file=output.osm.gz", "compressionMethod=gzip"]
 
     data.osm.osmosis.run(context, command)
 
@@ -98,17 +104,21 @@ def execute(context):
 
     return "output.osm.gz"
 
+
 def get_input_files(base_path):
     osm_paths = sorted(list(glob.glob("{}/*.osm.pbf".format(base_path))))
     osm_paths += sorted(list(glob.glob("{}/*.osm.xml".format(base_path))))
 
     if len(osm_paths) == 0:
-        raise RuntimeError("Did not find any OSM data (.osm.pbf) in {}".format(base_path))
-    
+        raise RuntimeError(
+            "Did not find any OSM data (.osm.pbf) in {}".format(base_path))
+
     return osm_paths
 
+
 def validate(context):
-    input_files = get_input_files("{}/{}".format(context.config("data_path"), context.config("osm_path")))
+    input_files = get_input_files(
+        "{}/{}".format(context.config("data_path"), context.config("osm_path")))
     total_size = 0
 
     for path in input_files:
