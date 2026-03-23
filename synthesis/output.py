@@ -224,11 +224,11 @@ def execute(context):
         path = "%s/%shomes.geoparquet" % (output_path, output_prefix)
         df_spatial_homes.to_parquet(path)
 
-    # Write spatial commutes
-    df_spatial = pd.merge(
-        df_spatial[df_spatial["purpose"] == "home"].drop_duplicates("person_id")[["person_id", "geometry"]].rename(columns = { "geometry": "home_geometry" }),
-        df_spatial[df_spatial["purpose"] == "work"].drop_duplicates("person_id")[["person_id", "geometry"]].rename(columns = { "geometry": "work_geometry" })
-    )
+    # Write spatial commutes (only for persons with valid home AND work geometries)
+    df_commute_home = df_spatial[df_spatial["purpose"] == "home"].drop_duplicates("person_id")[["person_id", "geometry"]].rename(columns = { "geometry": "home_geometry" })
+    df_commute_work = df_spatial[df_spatial["purpose"] == "work"].drop_duplicates("person_id")[["person_id", "geometry"]].rename(columns = { "geometry": "work_geometry" })
+    df_spatial = pd.merge(df_commute_home, df_commute_work)
+    df_spatial = df_spatial.dropna(subset=["home_geometry", "work_geometry"])
 
     df_spatial["geometry"] = [
         geo.LineString(od)
