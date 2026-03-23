@@ -59,3 +59,21 @@ def test_parse_pendler_matrix_no_file():
     from bavaria.gravity.pendler_data import parse_pendler_matrix
     with pytest.raises(FileNotFoundError):
         parse_pendler_matrix("/nonexistent.xlsx", {"09273"}, {"09273": 48830})
+
+
+def test_load_employed_at_wohnort():
+    """Load Beschaeftigte am Wohnort per Kreis from a6502c."""
+    from bavaria.gravity.pendler_data import load_employed_at_wohnort
+
+    a6502c_path = str(Path(__file__).parent.parent / "data" / "bavaria" / "a6502c_202200.xlsx")
+
+    wohnort = load_employed_at_wohnort(a6502c_path, STUDY_KREISE)
+
+    # Should have all study Kreise
+    assert set(wohnort.keys()) == STUDY_KREISE
+
+    # Kelheim should have ~48,000-50,000 employed residents
+    assert 40000 < wohnort["09273"] < 60000, f"Kelheim Wohnort={wohnort['09273']}"
+
+    # Regensburg Stadt should have more (large city)
+    assert wohnort["09362"] > wohnort["09273"]

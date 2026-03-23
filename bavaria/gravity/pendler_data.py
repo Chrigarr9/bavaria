@@ -1,5 +1,6 @@
 """
 Parse BA Pendlerverflechtungen (Kreis-level) into origin->destination shares.
+Load Beschaeftigte am Wohnort from a6502c for internal share computation.
 """
 import pandas as pd
 import numpy as np
@@ -77,5 +78,69 @@ def parse_pendler_matrix(excel_path, study_kreise, employed_at_wohnort):
     # Renormalize: employed_at_wohnort may be approximate, so ensure shares sum to 1.0
     totals = result.groupby("origin_kreis")["share"].transform("sum")
     result["share"] = result["share"] / totals
+
+    return result
+
+
+def load_employed_at_wohnort(a6502c_path, study_kreise):
+    """
+    Load Beschaeftigte am Wohnort (employed residents) per Kreis from a6502c.
+
+    Uses the same parsing approach as bavaria.data.census.employees:
+    forward-fill Kreis headers, distinguish kreisfrei cities from Landkreise.
+
+    Args:
+        a6502c_path: Path to a6502c_YYYYMM.xlsx (Bavarian employment statistics)
+        study_kreise: Set of 5-digit Kreis codes (e.g. {"09273", "09362"})
+
+    Returns:
+        Dict {kreis_code: employed_at_wohnort_count}
+    """
+    df = pd.read_excel(a6502c_path, sheet_name="Gemeinden", header=None, skiprows=8,
+                        names=["code", "name", "unknown1", "arbeitsort", "male",
+                               "foreigners", "s4", "s5", "s6", "s7", "s8",
+                               "wohnort", "saldo"])
+    df["code"] = df["code"].astype(str).str.strip()
+
+    # Remove text footer (lines starting with "*)")
+    end_idx = df["code"].str.startswith("*)").idxmax() if df["code"].str.startswith("*)").any() else len(df)
+    df = df.iloc[:end_idx].copy()
+
+    # Remove "Insgesamt" totals
+    df = df[df["name"].astype(str) != "Insgesamt"].copy()
+
+    # Identify data rows (have numeric arbeitsort)
+    df["has_data"] = pd.to_numeric(df["arbeitsort"], errors="coerce").notna()
+
+    # Kreisfreie cities: have data AND "(Krfr" in name
+    df["is_kreisfrei"] = df["has_data"] & df["name"].astype(str).str.contains("Krfr", na=False)
+
+    # Forward-fill Kreis code from non-data rows (Kreis headers)
+    df["kreis"] = np.nan
+    df.loc[~df["has_data"], "kreis"] = df["code"]
+    df["kreis"] = df["kreis"].ffill()
+
+    # Kreisfreie cities don't belong to a Landkreis — they ARE the Kreis
+    df.loc[df["is_kreisfrei"], "kreis"] = np.nan
+
+    # Keep only data rows
+    df = df[df["has_data"]].copy()
+    df["wohnort"] = pd.to_numeric(df["wohnort"], errors="coerce").fillna(0)
+
+    # Build 5-digit Kreis AGS
+    # Kreisfreie: "09" + city_code (e.g. "362" -> "09362")
+    # Landkreise Gemeinden: "09" + kreis_code (e.g. kreis="273" -> "09273")
+    df["kreis_5"] = np.where(
+        df["kreis"].isna(),
+        "09" + df["code"],  # kreisfreie: city code IS the Kreis code
+        "09" + df["kreis"]  # Landkreise: use forward-filled Kreis header
+    )
+
+    # Aggregate by Kreis
+    kreis_wohnort = df.groupby("kreis_5")["wohnort"].sum()
+
+    result = {}
+    for kreis in study_kreise:
+        result[kreis] = int(kreis_wohnort.get(kreis, 0))
 
     return result
