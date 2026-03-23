@@ -54,6 +54,42 @@ def test_parse_pendler_matrix():
     assert kh_outside > 0.0, "Should have some outside flows"
 
 
+def test_parse_gemeinde_od():
+    """Parse Pendlerrechnung Gemeinde-level top-10 Auspendler flows."""
+    from bavaria.gravity.pendler_data import parse_gemeinde_od
+
+    verfl_path = str(Path(__file__).parent.parent / "data" / "bavaria" / "2024_Verfl_L09.csv")
+    iop_path = str(Path(__file__).parent.parent / "data" / "bavaria" / "2024_IOP_Karte_L00.csv")
+
+    study_municipalities = {"092730137137", "092730111111", "092730152152",
+                            "093620000000", "093750174174"}
+
+    result = parse_gemeinde_od(verfl_path, iop_path, study_municipalities)
+
+    assert set(result.columns) == {"origin_id", "destination_id", "count", "source"}
+
+    # Internal flows should exist (from IOP)
+    kh_internal = result[
+        (result["origin_id"] == "092730137137") & (result["destination_id"] == "092730137137")
+    ]
+    assert len(kh_internal) == 1
+    assert kh_internal.iloc[0]["source"] == "iop"
+    assert kh_internal.iloc[0]["count"] > 2000
+
+    # Cross-Gemeinde flows should exist (from Verfl top-10)
+    kh_to_reg = result[
+        (result["origin_id"] == "092730137137") & (result["destination_id"] == "093620000000")
+    ]
+    assert len(kh_to_reg) == 1
+    assert kh_to_reg.iloc[0]["source"] == "verfl"
+    assert kh_to_reg.iloc[0]["count"] > 1000
+
+    # Outside flows should be captured
+    kh_flows = result[result["origin_id"] == "092730137137"]
+    outside = kh_flows[~kh_flows["destination_id"].isin(study_municipalities)]
+    assert len(outside) > 0, "Should have some outside-study-area flows in top-10"
+
+
 def test_parse_pendler_matrix_no_file():
     """Should raise if file doesn't exist."""
     from bavaria.gravity.pendler_data import parse_pendler_matrix

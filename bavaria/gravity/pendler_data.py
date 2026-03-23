@@ -82,6 +82,52 @@ def parse_pendler_matrix(excel_path, study_kreise, employed_at_wohnort):
     return result
 
 
+def parse_gemeinde_od(verfl_path, iop_path, study_municipalities):
+    """
+    Parse Pendlerrechnung Gemeinde-level OD data.
+
+    Combines top-10 Auspendler flows (Verfl) with internal commuters (IOP).
+
+    Args:
+        verfl_path: Path to 2024_Verfl_L09.csv (top-10 Auspendler per Gemeinde)
+        iop_path: Path to 2024_IOP_Karte_L00.csv (internal commuters)
+        study_municipalities: Set of 12-digit ARS commune_ids in the study area
+
+    Returns:
+        DataFrame [origin_id, destination_id, count, source]
+        where source is "verfl" (top-10 cross-Gemeinde) or "iop" (internal).
+        Includes flows to destinations outside study_municipalities.
+    """
+    df_verfl = pd.read_csv(verfl_path, sep=";", dtype=str)
+    df_verfl["AUSP_AO"] = pd.to_numeric(df_verfl["AUSP_AO"], errors="coerce")
+    df_verfl = df_verfl[df_verfl["ARS"].isin(study_municipalities)].copy()
+
+    rows = []
+    for _, row in df_verfl.iterrows():
+        if pd.notna(row["AUSP_AO"]) and row["AUSP_AO"] > 0:
+            rows.append({
+                "origin_id": row["ARS"],
+                "destination_id": row["ARS_AO"],
+                "count": row["AUSP_AO"],
+                "source": "verfl",
+            })
+
+    df_iop = pd.read_csv(iop_path, sep=";", dtype=str)
+    df_iop["IOP"] = pd.to_numeric(df_iop["IOP"], errors="coerce")
+    df_iop = df_iop[df_iop["ARS"].isin(study_municipalities)]
+
+    for _, row in df_iop.iterrows():
+        if pd.notna(row["IOP"]) and row["IOP"] > 0:
+            rows.append({
+                "origin_id": row["ARS"],
+                "destination_id": row["ARS"],
+                "count": row["IOP"],
+                "source": "iop",
+            })
+
+    return pd.DataFrame(rows)
+
+
 def load_employed_at_wohnort(a6502c_path, study_kreise):
     """
     Load Beschaeftigte am Wohnort (employed residents) per Kreis from a6502c.
