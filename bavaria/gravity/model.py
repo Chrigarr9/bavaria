@@ -5,6 +5,7 @@ import numpy as np
 
 """
 Apply gravity model to generate a distance matrix for Oberbayern.
+Optionally constrained by official BA Pendlerverflechtungen at Kreis level.
 """
 
 DEFAULT_SLOPE = -0.2 # -0.09 came from IDF, value -2.0 has been calibrated
@@ -18,6 +19,9 @@ def configure(context):
     context.config("gravity_slope", DEFAULT_SLOPE)
     context.config("gravity_constant", DEFAULT_CONSTANT)
     context.config("gravity_diagonal", DEFAULT_DIAGONAL)
+    context.config("pendler_od_path", None)
+    context.config("data_path")
+    context.config("bavaria.work_flow_path", "bavaria/a6502c_202200.xlsx")
 
 def evaluate_gravity(population, employees, friction):
     # Initizlize production, attraction, and flow
@@ -57,7 +61,7 @@ def evaluate_gravity(population, employees, friction):
         attraction_delta = np.abs(attraction - previous_attraction)
         flow_delta = np.abs(flow - previous_flow)
 
-        print("Gravity iteration", iteration, 
+        print("Gravity iteration", iteration,
             "prod. max. Δ:", np.max(production_delta),
             "attr. max. Δ:", np.max(attraction_delta),
             "flow max. Δ:", np.max(flow_delta),
@@ -67,9 +71,85 @@ def evaluate_gravity(population, employees, friction):
         if np.max(production_delta) < 1e-3 and np.max(attraction_delta) < 1e-3 and np.max(flow_delta) < 1e-3:
             converged = True
             break
-    
+
     assert converged
     return flow
+
+
+def build_pendler_constrained_matrix(municipalities, df_employees, df_distances,
+                                      pendler_shares, study_kreise, slope):
+    """
+    Build Gemeinde x Gemeinde OD probability matrix constrained by Kreis-level Pendler shares.
+
+    P(g_j | g_i) = P_pendler(K_d | K_o) * P_gravity(g_j | K_d, g_i)
+
+    Where P_gravity uses employee count * distance decay within each destination Kreis.
+    """
+    # Build Gemeinde -> Kreis lookup (first 5 digits of commune_id)
+    gem_to_kreis = {m: m[:5] for m in municipalities}
+
+    # Group Gemeinden by Kreis
+    kreis_to_gems = {}
+    for m, k in gem_to_kreis.items():
+        kreis_to_gems.setdefault(k, []).append(m)
+
+    # Index employees
+    emp_lookup = dict(zip(df_employees["destination_id"], df_employees["employees"]))
+
+    # Index distances into a fast lookup
+    dist_lookup = {}
+    for _, row in df_distances.iterrows():
+        dist_lookup[(row["origin_id"], row["destination_id"])] = row["distance_km"]
+
+    # Build Pendler share lookup: {(origin_kreis, dest_kreis): share}
+    pendler_lookup = {}
+    for _, row in pendler_shares.iterrows():
+        pendler_lookup[(row["origin_kreis"], row["destination_kreis"])] = row["share"]
+
+    rows = []
+    for origin in municipalities:
+        origin_kreis = gem_to_kreis[origin]
+        origin_total_weight = 0.0
+        origin_rows = []
+
+        for dest_kreis in sorted(set(gem_to_kreis.values())):
+            pendler_share = pendler_lookup.get((origin_kreis, dest_kreis), 0.0)
+            if pendler_share <= 0:
+                continue
+
+            # Gravity weights within destination Kreis
+            dest_gems = kreis_to_gems.get(dest_kreis, [])
+            gravity_weights = []
+            for dest in dest_gems:
+                emp = emp_lookup.get(dest, 0)
+                dist = dist_lookup.get((origin, dest), 50.0)  # default 50km if missing
+                w = emp * np.exp(slope * dist)
+                gravity_weights.append((dest, w))
+
+            grav_total = sum(w for _, w in gravity_weights)
+            if grav_total <= 0:
+                # No employees in this Kreis — distribute evenly
+                grav_total = len(gravity_weights) if gravity_weights else 1
+                gravity_weights = [(d, 1.0) for d, _ in gravity_weights]
+
+            for dest, gw in gravity_weights:
+                weight = pendler_share * (gw / grav_total)
+                origin_rows.append({"origin_id": origin, "destination_id": dest, "weight": weight})
+                origin_total_weight += weight
+
+        # Renormalize (drop _outside share, renormalize remaining to 1.0)
+        if origin_total_weight > 0:
+            for row in origin_rows:
+                row["weight"] /= origin_total_weight
+        elif origin_rows:
+            # Fallback: equal distribution
+            for row in origin_rows:
+                row["weight"] = 1.0 / len(origin_rows)
+
+        rows.extend(origin_rows)
+
+    return pd.DataFrame(rows)
+
 
 def execute(context):
     # Load data
@@ -97,11 +177,54 @@ def execute(context):
     municipalities |= set(df_distances["origin_id"])
     municipalities |= set(df_distances["destination_id"])
     municipalities = sorted(list(municipalities))
-    
+
+    pendler_od_path = context.config("pendler_od_path")
+
+    if pendler_od_path is not None:
+        # === PENDLER-CONSTRAINED MODE ===
+        from bavaria.gravity.pendler_data import parse_pendler_matrix, load_employed_at_wohnort
+
+        data_path = context.config("data_path")
+        full_pendler_path = "{}/{}".format(data_path, pendler_od_path)
+        a6502c_path = "{}/{}".format(data_path, context.config("bavaria.work_flow_path"))
+
+        study_kreise = set(m[:5] for m in municipalities)
+        print(f"Pendler-constrained mode: {len(study_kreise)} Kreise, {len(municipalities)} Gemeinden")
+
+        wohnort = load_employed_at_wohnort(a6502c_path, study_kreise)
+        pendler_shares = parse_pendler_matrix(full_pendler_path, study_kreise, wohnort)
+
+        slope = context.config("gravity_slope")
+
+        df_work_matrix = build_pendler_constrained_matrix(
+            municipalities, df_employees.reset_index() if "destination_id" not in df_employees.columns else df_employees,
+            df_distances.reset_index() if "origin_id" not in df_distances.columns else df_distances,
+            pendler_shares, study_kreise, slope
+        )
+
+        # Education: pure gravity (no Pendler data for education)
+        df_education_matrix = _build_pure_gravity(
+            context, municipalities, df_population, df_employees, df_distances
+        )
+
+        return df_work_matrix, df_education_matrix
+
+    else:
+        # === PURE GRAVITY MODE (backward compatible) ===
+        df_matrix = _build_pure_gravity(
+            context, municipalities, df_population, df_employees, df_distances
+        )
+        return df_matrix, df_matrix
+
+
+def _build_pure_gravity(context, municipalities, df_population, df_employees, df_distances):
+    """Original gravity model logic, extracted to a helper."""
     # Make sure we have all municipalities in all data sets
     df_population = df_population.set_index("origin_id").reindex(municipalities).fillna(0.0)
-    df_employees = df_employees.set_index("destination_id").reindex(municipalities).fillna(0.0)
+    df_employees = df_employees.set_index("destination_id").reindex(municipalities).fillna(0.0) if "destination_id" in df_employees.columns else df_employees.reindex(municipalities).fillna(0.0)
     df_distances = df_distances.set_index(["origin_id", "destination_id"]).reindex(pd.MultiIndex.from_product([
+        municipalities, municipalities
+    ])) if "origin_id" in df_distances.columns else df_distances.reindex(pd.MultiIndex.from_product([
         municipalities, municipalities
     ]))
 
@@ -109,7 +232,7 @@ def execute(context):
     distances = df_distances["distance_km"].values.reshape((len(municipalities), len(municipalities)))
 
     # Run model
-    population = df_population["population"] 
+    population = df_population["population"]
     employees = df_employees["employees"]
 
     # Balancing of the remaining population and workplaces
@@ -145,5 +268,4 @@ def execute(context):
     df_matrix["weight"] = df_matrix["weight"] / df_matrix["total"]
     df_matrix = df_matrix[["origin_id", "destination_id", "weight"]]
 
-    # One representing work, one representing education
-    return df_matrix, df_matrix
+    return df_matrix
