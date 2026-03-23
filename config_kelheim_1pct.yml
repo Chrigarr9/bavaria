@@ -1,53 +1,41 @@
-## Synthetic population pipeline for Bavaria
-## based on the synpp package
+## Synthetic population pipeline for Kelheim Landkreis - 1% Test Sample
+## Used to verify the pipeline works before generating the full 100% population
 
-# This is the path to a directory where the pipeline can store temporary data
-working_directory: cache
+working_directory: C:/matsim_cache
 
-# This section defines which parts of the pipeline should be run
 run:
   - synthesis.output
   - matsim.output
 
-# Here the configuraiton of the pipeline starts
 config:
-  # Some general configuration
-  processes: 8
-
-  # Define whether to use ENTD or EGT as the household travel survey (HTS)
+  processes: 1
   hts: entd
-
-  # Define sampling rate and random seed for the output population
   sampling_rate: 0.01
   random_seed: 1234
- 
-  # Paths to the input data and where the output should be stored
-  data_path: data
-  output_path: output
-  output_prefix: bavaria_1pct_
 
-  # Only interesting if you run the simulation
+  data_path: C:/Users/VWAUCCY/dev/msf/projects/Dissertation/matsim_scenarios/bavaria/data
+  output_path: C:/Users/VWAUCCY/dev/msf/projects/Dissertation/matsim_scenarios/bavaria/output/kelheim_1pct
+  output_prefix: kelheim_1pct_
+
+  bavaria.population_path: bavaria/a1310c_202200.xlsx
+  bavaria.work_flow_path: bavaria/a6502c_202200.xlsx
+
   java_memory: 10G
-  # Download osmosis manually from: https://wiki.openstreetmap.org/wiki/Osmosis
-  # Extract to tools/osmosis/ and update the path below
-  osmosis_binary: tools/osmosis/bin/osmosis
-  osmconvert_binary: tools/osmconvert.exe
+  osmosis_binary: C:/Users/VWAUCCY/dev/msf/projects/Dissertation/matsim_scenarios/bavaria/tools/osmosis/bin/osmosis.bat
+  osmconvert_binary: C:/Users/VWAUCCY/dev/msf/projects/Dissertation/matsim_scenarios/bavaria/tools/osmconvert.exe
+  osmium_binary: C:/Users/VWAUCCY/AppData/Roaming/mamba/envs/bavaria/Library/bin/osmium.exe
 
-  # Defaults for Bavaria
   home_location_sampling: weighted
   mode_choice: false
   matching_attributes: ["sex", "age_class", "has_license"]
 
   gtfs_path: gtfs
   osm_path: osm
-  
-  # Filter OSM data to reduce memory usage (exclude minor paths)
   osm_highways: motorway,trunk,primary,secondary,tertiary,unclassified,residential,motorway_link,trunk_link,primary_link,secondary_link,tertiary_link,living_street,service,pedestrian,cycleway,footway,steps,track,path
 
-  # Activate if only certain "Bezirk" should be generated
-  bavaria.political_prefix: ["09162"] # Munich City (München, Stadt)
+  # KELHEIM LANDKREIS ONLY
+  bavaria.political_prefix: "09273"
 
-# Overrides for the bavaria pipeline compared to the Île-de-France pipeline
 aliases:
   data.census.filtered: bavaria.ipf.attributed
   synthesis.population.income.selected: bavaria.income

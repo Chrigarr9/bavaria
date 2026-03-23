@@ -1,8 +1,8 @@
-## Synthetic population pipeline for Bavaria
+## Synthetic population pipeline for Bavaria - 1% Sample
 ## based on the synpp package
 
 # This is the path to a directory where the pipeline can store temporary data
-working_directory: cache
+working_directory: C:/matsim_cache
 
 # This section defines which parts of the pipeline should be run
 run:
@@ -12,7 +12,7 @@ run:
 # Here the configuraiton of the pipeline starts
 config:
   # Some general configuration
-  processes: 8
+  processes: 1
 
   # Define whether to use ENTD or EGT as the household travel survey (HTS)
   hts: entd
@@ -22,16 +22,20 @@ config:
   random_seed: 1234
  
   # Paths to the input data and where the output should be stored
-  data_path: data
-  output_path: output
+  data_path: C:/Users/VWAUCCY/dev/msf/projects/Dissertation/matsim_scenarios/bavaria/data
+  output_path: C:/Users/VWAUCCY/dev/msf/projects/Dissertation/matsim_scenarios/bavaria/output/bavaria_1pct
   output_prefix: bavaria_1pct_
+
+  # Local file names (xlsx) for Bavarian census data
+  bavaria.population_path: bavaria/a1310c_202200.xlsx
+  bavaria.work_flow_path: bavaria/a6502c_202200.xlsx
 
   # Only interesting if you run the simulation
   java_memory: 10G
   # Download osmosis manually from: https://wiki.openstreetmap.org/wiki/Osmosis
   # Extract to tools/osmosis/ and update the path below
-  osmosis_binary: tools/osmosis/bin/osmosis
-  osmconvert_binary: tools/osmconvert.exe
+  osmosis_binary: C:/Users/VWAUCCY/dev/msf/projects/Dissertation/matsim_scenarios/bavaria/tools/osmosis/bin/osmosis.bat
+  osmconvert_binary: C:/Users/VWAUCCY/dev/msf/projects/Dissertation/matsim_scenarios/bavaria/tools/osmconvert.exe
 
   # Defaults for Bavaria
   home_location_sampling: weighted
@@ -45,7 +49,7 @@ config:
   osm_highways: motorway,trunk,primary,secondary,tertiary,unclassified,residential,motorway_link,trunk_link,primary_link,secondary_link,tertiary_link,living_street,service,pedestrian,cycleway,footway,steps,track,path
 
   # Activate if only certain "Bezirk" should be generated
-  bavaria.political_prefix: ["09162"] # Munich City (München, Stadt)
+  # bavaria.political_prefix: ["09162"] # Munich City (München, Stadt)
 
 # Overrides for the bavaria pipeline compared to the Île-de-France pipeline
 aliases:

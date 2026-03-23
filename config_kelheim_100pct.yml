@@ -1,0 +1,64 @@
+## Synthetic population pipeline for Kelheim dilution area - 100% Full Population
+## Covers all 7 complete Landkreise intersecting the calibrated 25% Kelheim scenario extent
+## Full Kreise required for IPF convergence (employment data is Kreis-level)
+## Dilution area agents spatially filtered during merge step
+## For population upsampling + comparison with calibrated Senozon scenario
+
+working_directory: C:/matsim_cache
+
+run:
+  - synthesis.output
+  - matsim.output
+
+config:
+  processes: 8
+  hts: entd
+  sampling_rate: 1.0
+  random_seed: 1234
+
+  data_path: C:/Users/VWAUCCY/dev/msf/projects/Dissertation/matsim_scenarios/bavaria/data
+  output_path: C:/Users/VWAUCCY/dev/msf/projects/Dissertation/matsim_scenarios/bavaria/output/kelheim_100pct
+  output_prefix: kelheim_100pct_
+
+  bavaria.population_path: bavaria/a1310c_202200.xlsx
+  bavaria.work_flow_path: bavaria/a6502c_202200.xlsx
+
+  java_memory: 60G
+  osmosis_binary: C:/Users/VWAUCCY/dev/msf/projects/Dissertation/matsim_scenarios/bavaria/tools/osmosis/bin/osmosis.bat
+  osmconvert_binary: C:/Users/VWAUCCY/dev/msf/projects/Dissertation/matsim_scenarios/bavaria/tools/osmconvert.exe
+  osmium_binary: C:/Users/VWAUCCY/AppData/Roaming/mamba/envs/bavaria/Library/bin/osmium.exe
+
+  home_location_sampling: weighted
+  mode_choice: false
+  matching_attributes: ["sex", "age_class", "has_license"]
+
+  gtfs_path: gtfs
+  osm_path: osm
+  osm_highways: motorway,trunk,primary,secondary,tertiary,unclassified,residential,motorway_link,trunk_link,primary_link,secondary_link,tertiary_link,living_street,service,pedestrian,cycleway,footway,steps,track,path
+
+  # Full 7 Landkreise that intersect the 25% Kelheim dilution area (~1M pop)
+  # Must include complete Kreise for IPF convergence (employment data is Kreis-level)
+  # Dilution area agents will be spatially filtered during the merge step
+  bavaria.political_prefix:
+    - "09273"  # Kelheim (LK) — core area (~126k)
+    - "09375"  # Regensburg (LK) (~195k)
+    - "09186"  # Pfaffenhofen a.d.Ilm (LK) (~130k)
+    - "09274"  # Landshut (LK) (~165k)
+    - "09176"  # Eichstätt (LK) (~133k)
+    - "09178"  # Freising (LK) (~180k)
+    - "09373"  # Neumarkt i.d.OPf (LK) (~135k)
+
+aliases:
+  data.census.filtered: bavaria.ipf.attributed
+  synthesis.population.income.selected: bavaria.income
+  synthesis.population.spatial.home.zones: bavaria.homes
+  synthesis.locations.home.locations: bavaria.locations.home
+  synthesis.locations.education: bavaria.locations.education
+  synthesis.locations.secondary: bavaria.locations.secondary
+  synthesis.locations.work: bavaria.locations.work
+  data.od.weighted: bavaria.gravity.model
+  data.spatial.iris: bavaria.data.spatial.iris
+  data.spatial.codes: bavaria.entd_codes
+  synthesis.population.spatial.primary.locations: bavaria.locations.synthesis.replacement
+  synthesis.population.enriched: bavaria.synthesis.population.enriched
+  matsim.simulation.prepare: bavaria.matsim.simulation.prepare

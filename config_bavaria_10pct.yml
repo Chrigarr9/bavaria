@@ -1,4 +1,4 @@
-## Synthetic population pipeline for Bavaria
+## Synthetic population pipeline for Bavaria - 10% Sample
 ## based on the synpp package
 
 # This is the path to a directory where the pipeline can store temporary data
@@ -18,19 +18,19 @@ config:
   hts: entd
 
   # Define sampling rate and random seed for the output population
-  sampling_rate: 0.01
+  sampling_rate: 0.10
   random_seed: 1234
  
   # Paths to the input data and where the output should be stored
   data_path: data
-  output_path: output
-  output_prefix: bavaria_1pct_
+  output_path: output/bavaria_10pct
+  output_prefix: bavaria_10pct_
 
   # Only interesting if you run the simulation
   java_memory: 10G
   # Download osmosis manually from: https://wiki.openstreetmap.org/wiki/Osmosis
   # Extract to tools/osmosis/ and update the path below
-  osmosis_binary: tools/osmosis/bin/osmosis
+  osmosis_binary: tools/osmosis/bin/osmosis.bat
   osmconvert_binary: tools/osmconvert.exe
 
   # Defaults for Bavaria
