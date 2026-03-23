@@ -1,0 +1,22 @@
+## MiD 2017 Reference Data for Bavaria / Kelheim Area
+## Source: MiD 2017 Kurzreport Bayern (infas/BMVI)
+## Extracted: 2026-03-17
+
+## OVERALL MODAL SPLIT - BAYERN
+## Mode: walk, bike, car_driver, car_passenger, pt
+region;walk;bike;car_driver;car_passenger;pt
+Bayern;0.20;0.11;0.45;0.14;0.10
+
+## BY REGIERUNGSBEZIRK
+Oberbayern;0.20;0.14;0.39;0.13;0.14
+Niederbayern;0.16;0.07;0.54;0.16;0.07
+Oberpfalz;0.18;0.08;0.53;0.15;0.06
+Oberfranken;0.20;0.07;0.52;0.15;0.07
+Mittelfranken;0.22;0.12;0.41;0.13;0.11
+Unterfranken;0.22;0.08;0.48;0.15;0.07
+Schwaben;0.20;0.13;0.47;0.15;0.06
+
+## KELHEIM AREA TARGET (weighted avg Niederbayern 60% + Oberpfalz 40%)
+## Kelheim LK, Landshut LK, Straubing-Bogen, Dingolfing-Landau = Niederbayern
+## Regensburg Stadt+LK, Neumarkt, Schwandorf, Eichstätt = Oberpfalz (approx)
+Kelheim_area_weighted;0.17;0.07;0.54;0.16;0.07

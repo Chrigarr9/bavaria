@@ -1,0 +1,45 @@
+## MiD 2017 Trip Characteristics - Bayern
+## Source: MiD 2017 Kurzreport Bayern page 13, 19
+
+## TRIPS PER PERSON PER DAY
+metric;value
+trips_per_person_per_day;3.2
+daily_distance_km;39
+travel_time_hhmm;1:18
+mobility_rate;0.86
+
+## TRIP LENGTH BY MODE (km)
+mode;mean_km;median_km
+walk;1.7;1.0
+bike;3.9;2.0
+car_driver;15.6;6.7
+car_passenger;17.5;5.7
+pt;23.1;8.1
+
+## TRIP PURPOSE SHARES (Bayern 2017)
+purpose;share
+work;0.17
+business;0.10
+education;0.07
+shopping;0.15
+errands;0.14
+leisure;0.28
+escort;0.08
+
+## TRIP PURPOSE DISTANCES (Bayern 2017, mean/median km)
+purpose;mean_km;median_km;mean_min;median_min
+work;15.4;7.8;26.8;20.0
+business;20.2;6.3;42.9;20.0
+education;7.8;2.9;22.7;15.0
+shopping;5.3;2.1;16.9;10.0
+errands;10.0;3.4;23.2;15.0
+leisure;15.3;3.9;34.9;15.0
+escort;8.9;2.9;18.4;10.0
+
+## DAILY TRAFFIC VOLUMES (Mio. trips/day Bayern 2017)
+mode;trips_mio_per_day;pkm_mio_per_day
+walk;8.1;13.7
+bike;4.6;17.8
+car_driver;18.0;282.0
+car_passenger;5.7;101.0
+pt;4.0;92.1
