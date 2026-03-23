@@ -116,7 +116,7 @@ def execute(context):
     df_persons["has_work_trip"] = df_persons["person_id"].isin(df_trips[
         (df_trips["following_purpose"] == "work") | (df_trips["preceding_purpose"] == "work")
     ]["person_id"])
-    
+
     df_persons["has_education_trip"] = df_persons["person_id"].isin(df_trips[
         (df_trips["following_purpose"] == "education") | (df_trips["preceding_purpose"] == "education")
     ]["person_id"])
@@ -125,7 +125,33 @@ def execute(context):
     df_persons = pd.merge(df_persons, df_homes, on = "household_id")
 
     # Prepare spatial data
-    df_work_od, df_education_od = context.stage("data.od.weighted")
+    od_result = context.stage("data.od.weighted")
+
+    df_outside = None
+    if len(od_result) == 3:
+        df_work_od, df_education_od, df_outside = od_result
+    else:
+        df_work_od, df_education_od = od_result
+
+    # Mark outside commuters: persons whose work would be outside the study area
+    if df_outside is not None:
+        random_outside = np.random.RandomState(context.config("random_seed") + 9999)
+        df_persons = pd.merge(df_persons, df_outside, on="commune_id", how="left")
+        df_persons["outside_fraction"] = df_persons["outside_fraction"].fillna(0.0)
+
+        # For each person with a work trip, randomly flag as outside commuter
+        work_mask = df_persons["has_work_trip"].values.copy()
+        outside_frac = df_persons["outside_fraction"].values
+        u = random_outside.random_sample(len(df_persons))
+        outside_commuter = work_mask & (u < outside_frac)
+
+        n_outside = outside_commuter.sum()
+        n_work = work_mask.sum()
+        print(f"Outside commuters: {n_outside}/{n_work} workers ({n_outside/max(n_work,1):.1%}) "
+              f"will not receive work trips")
+
+        df_persons.loc[outside_commuter, "has_work_trip"] = False
+        df_persons = df_persons.drop(columns=["outside_fraction"])
 
     # Sampling
     random = np.random.RandomState(context.config("random_seed"))

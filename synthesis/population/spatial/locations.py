@@ -19,6 +19,18 @@ def execute(context):
     df_persons = context.stage("synthesis.population.sampled")[["person_id", "household_id"]]
     df_locations = context.stage("synthesis.population.activities")[["person_id", "activity_index", "purpose"]]
 
+    # Identify persons with work activities but no assigned work location
+    # (outside commuters flagged in candidates stage)
+    persons_with_work_activities = set(df_locations[df_locations["purpose"] == "work"]["person_id"])
+    persons_with_work_locations = set(df_work["person_id"])
+    outside_commuters = persons_with_work_activities - persons_with_work_locations
+
+    if len(outside_commuters) > 0:
+        print(f"Dropping {len(outside_commuters)} outside commuters from population "
+              f"({len(outside_commuters)/len(persons_with_work_activities):.1%} of workers)")
+        # Remove ALL activities for these persons (drop from population entirely)
+        df_locations = df_locations[~df_locations["person_id"].isin(outside_commuters)]
+
     # Home locations
     df_home_locations = df_locations[df_locations["purpose"] == "home"]
     df_home_locations = pd.merge(df_home_locations, df_persons, on = "person_id")

@@ -202,12 +202,27 @@ def execute(context):
             pendler_shares, study_kreise, slope
         )
 
+        # Compute outside fraction per municipality (for downstream use)
+        outside_by_kreis = {}
+        for _, row in pendler_shares.iterrows():
+            if row["destination_kreis"] == "_outside":
+                outside_by_kreis[row["origin_kreis"]] = row["share"]
+
+        df_outside = pd.DataFrame([
+            {"commune_id": mun, "outside_fraction": outside_by_kreis.get(mun[:5], 0.0)}
+            for mun in municipalities
+        ])
+
+        n_affected = (df_outside["outside_fraction"] > 0).sum()
+        print(f"Outside commuter fractions: {n_affected} municipalities affected, "
+              f"range {df_outside['outside_fraction'].min():.1%}–{df_outside['outside_fraction'].max():.1%}")
+
         # Education: pure gravity (no Pendler data for education)
         df_education_matrix = _build_pure_gravity(
             context, municipalities, df_population, df_employees, df_distances
         )
 
-        return df_work_matrix, df_education_matrix
+        return df_work_matrix, df_education_matrix, df_outside
 
     else:
         # === PURE GRAVITY MODE (backward compatible) ===
