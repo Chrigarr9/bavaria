@@ -20,6 +20,8 @@ def configure(context):
     context.config("gravity_constant", DEFAULT_CONSTANT)
     context.config("gravity_diagonal", DEFAULT_DIAGONAL)
     context.config("pendler_od_path", None)
+    context.config("gemeinde_od_path", None)
+    context.config("gemeinde_iop_path", None)
     context.config("data_path")
     context.config("bavaria.work_flow_path", "bavaria/a6502c_202200.xlsx")
 
@@ -290,10 +292,43 @@ def execute(context):
     municipalities |= set(df_distances["destination_id"])
     municipalities = sorted(list(municipalities))
 
+    gemeinde_od_path = context.config("gemeinde_od_path")
     pendler_od_path = context.config("pendler_od_path")
 
-    if pendler_od_path is not None:
-        # === PENDLER-CONSTRAINED MODE ===
+    if gemeinde_od_path is not None:
+        # === GEMEINDE-LEVEL OD MODE (most precise) ===
+        from bavaria.gravity.pendler_data import parse_gemeinde_od
+
+        data_path = context.config("data_path")
+        full_verfl_path = "{}/{}".format(data_path, gemeinde_od_path)
+        full_iop_path = "{}/{}".format(data_path, context.config("gemeinde_iop_path"))
+
+        study_kreise = set(m[:5] for m in municipalities)
+        print(f"Gemeinde-level OD mode: {len(study_kreise)} Kreise, {len(municipalities)} Gemeinden")
+
+        gemeinde_od = parse_gemeinde_od(full_verfl_path, full_iop_path, set(municipalities))
+
+        slope = context.config("gravity_slope")
+        df_work_matrix, df_outside = build_gemeinde_constrained_matrix(
+            municipalities,
+            df_employees.reset_index() if "destination_id" not in df_employees.columns else df_employees,
+            df_distances.reset_index() if "origin_id" not in df_distances.columns else df_distances,
+            gemeinde_od, study_kreise, slope
+        )
+
+        n_affected = (df_outside["outside_fraction"] > 0).sum()
+        print(f"Outside commuter fractions: {n_affected} municipalities affected, "
+              f"range {df_outside['outside_fraction'].min():.1%}-{df_outside['outside_fraction'].max():.1%}")
+
+        # Education: pure gravity (no Pendler data for education)
+        df_education_matrix = _build_pure_gravity(
+            context, municipalities, df_population, df_employees, df_distances
+        )
+
+        return df_work_matrix, df_education_matrix, df_outside
+
+    elif pendler_od_path is not None:
+        # === KREIS-LEVEL PENDLER MODE ===
         from bavaria.gravity.pendler_data import parse_pendler_matrix, load_employed_at_wohnort
 
         data_path = context.config("data_path")
@@ -309,12 +344,13 @@ def execute(context):
         slope = context.config("gravity_slope")
 
         df_work_matrix = build_pendler_constrained_matrix(
-            municipalities, df_employees.reset_index() if "destination_id" not in df_employees.columns else df_employees,
+            municipalities,
+            df_employees.reset_index() if "destination_id" not in df_employees.columns else df_employees,
             df_distances.reset_index() if "origin_id" not in df_distances.columns else df_distances,
             pendler_shares, study_kreise, slope
         )
 
-        # Compute outside fraction per municipality (for downstream use)
+        # Compute outside fraction per municipality (from Kreis-level Pendler)
         outside_by_kreis = {}
         for _, row in pendler_shares.iterrows():
             if row["destination_kreis"] == "_outside":
@@ -327,7 +363,7 @@ def execute(context):
 
         n_affected = (df_outside["outside_fraction"] > 0).sum()
         print(f"Outside commuter fractions: {n_affected} municipalities affected, "
-              f"range {df_outside['outside_fraction'].min():.1%}–{df_outside['outside_fraction'].max():.1%}")
+              f"range {df_outside['outside_fraction'].min():.1%}-{df_outside['outside_fraction'].max():.1%}")
 
         # Education: pure gravity (no Pendler data for education)
         df_education_matrix = _build_pure_gravity(

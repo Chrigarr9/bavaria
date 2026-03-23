@@ -51,6 +51,9 @@ config:
   gravity_diagonal: 0.0
   # BA Pendlerverflechtungen for Kreis-level commuter flow constraints (null = pure gravity)
   pendler_od_path: germany/krpend-k-0-202306-xlsx.xlsx
+  # Gemeinde-level Pendlerrechnung OD data (overrides Kreis-level when set)
+  gemeinde_od_path: bavaria/2024_Verfl_L09.csv
+  gemeinde_iop_path: bavaria/2024_IOP_Karte_L00.csv
 
   gtfs_path: gtfs
   osm_path: osm
