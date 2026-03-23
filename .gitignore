@@ -3,6 +3,11 @@ env
 cache
 output
 
+# Micromamba
+.micromamba/
+.mamba/
+micromamba.exe
+
 data/nantes_2015
 data/lyon_2015
 .vscode
@@ -17,6 +22,17 @@ config_local_*.yml
 *.pbf
 *.zip
 *.gz
+
+# Large exports
+exports/
+export/
+
+# Pipeline logs
+*.log
+
+# Calibration intermediates
+calibration/boptx/boptx-upstream/
+calibration/boptx/work/
 
 # Data Folders (Raw data)
 data/bavaria/
