@@ -95,6 +95,15 @@ def execute(context):
         "person_id", "activity_index", "geometry"
     ]]
 
+    # Drop persons not present in locations (outside commuters removed in locations stage)
+    valid_persons = set(df_locations["person_id"])
+    n_before = df_activities["person_id"].nunique()
+    df_activities = df_activities[df_activities["person_id"].isin(valid_persons)]
+    df_persons = df_persons[df_persons["person_id"].isin(valid_persons)]
+    n_after = df_activities["person_id"].nunique()
+    if n_before != n_after:
+        print(f"Dropped {n_before - n_after} outside commuters from output ({n_before - n_after}/{n_before} persons)")
+
     df_activities = pd.merge(df_activities, df_locations[[
         "person_id", "activity_index", "geometry"
     ]], how = "left", on = ["person_id", "activity_index"])
