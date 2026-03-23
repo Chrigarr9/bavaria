@@ -28,7 +28,7 @@ PURPOSE_MAP = [
 MODES_MAP = [
     ("1", "walk"),
     ("2", "car"), #
-    ("2.20", "bicycle"), # bike
+    ("2.2", "bicycle"), # bike — fixed: was "2.20" which never matched ENTD code "2.2"
     ("2.23", "car_passenger"), # motorcycle passenger
     ("2.25", "car_passenger"), # same
     ("3", "car"),

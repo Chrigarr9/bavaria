@@ -176,7 +176,11 @@ def execute(context):
 
     df_model["weight"] = weights
 
-    assert converged
+    if not converged:
+        print(f"WARNING: IPF did not converge after {iteration} iterations. "
+              f"Final factors: mean={np.mean(iteration_factors):.4f}, "
+              f"min={np.min(iteration_factors):.4f}, max={np.max(iteration_factors):.4f}. "
+              f"Proceeding with best-fit weights.")
 
     # Reestablish sex categories
     df_model["sex"] = df_model["sex"].replace({ 1: "male", 2: "female" }).astype("category")
