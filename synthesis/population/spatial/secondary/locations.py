@@ -42,6 +42,13 @@ def prepare_locations(context):
     df_locations = pd.merge(df_locations, df_work[["person_id", "work"]], how = "left", on = "person_id")
     df_locations = pd.merge(df_locations, df_education[["person_id", "education"]], how = "left", on = "person_id")
 
+    # Outside commuters have no work location — use home as proxy for secondary
+    # activity chain anchoring. These persons will be dropped from final output
+    # in locations.py, but secondary locations needs a valid geometry here.
+    f_missing_work = df_locations["work"].isna() & df_locations["home"].notna()
+    if f_missing_work.any():
+        df_locations.loc[f_missing_work, "work"] = df_locations.loc[f_missing_work, "home"]
+
     return df_locations[["person_id", "home", "work", "education"]].sort_values(by = "person_id"), crs
 
 def prepare_destinations(context):
