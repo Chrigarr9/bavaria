@@ -116,10 +116,17 @@ def execute(context):
     df_activities = pd.merge(df_activities, df_locations, how = "left", on = ["person_id", "activity_index"])
     #df_activities["location_id"] = df_activities["location_id"].fillna(-1).astype(int)
 
+    # Filter to persons with valid locations (drops outside commuters)
+    valid_persons = set(df_locations["person_id"])
+    df_persons = df_persons[df_persons["person_id"].isin(valid_persons)]
+    df_activities = df_activities[df_activities["person_id"].isin(valid_persons)]
+
     df_trips = context.stage("synthesis.population.trips")
+    df_trips = df_trips[df_trips["person_id"].isin(valid_persons)]
     df_trips["travel_time"] = df_trips["arrival_time"] - df_trips["departure_time"]
 
     df_vehicles = context.stage("synthesis.vehicles.vehicles")[1]
+    df_vehicles = df_vehicles[df_vehicles["owner_id"].isin(valid_persons)]
     df_vehicles = df_vehicles.sort_values(by = ["owner_id"])
 
     with gzip.open(output_path, 'wb+') as writer:
