@@ -151,6 +151,118 @@ def build_pendler_constrained_matrix(municipalities, df_employees, df_distances,
     return pd.DataFrame(rows)
 
 
+def build_gemeinde_constrained_matrix(municipalities, df_employees, df_distances,
+                                       gemeinde_od, study_kreise, slope):
+    """
+    Build Gemeinde x Gemeinde OD matrix using exact flows where known + gravity fill.
+
+    For each origin:
+    1. Internal flow from IOP data
+    2. Top-10 cross-Gemeinde flows from Verfl data (within study area)
+    3. Gravity fill for remaining Auspendler (employee x distance decay,
+       excluding already-assigned destinations)
+    4. Outside flows tracked for population dropping
+
+    Returns:
+        (df_weights, df_outside) where:
+        - df_weights: DataFrame [origin_id, destination_id, weight] summing to 1.0 per origin
+        - df_outside: DataFrame [commune_id, outside_fraction]
+    """
+    mun_set = set(municipalities)
+
+    # Index employees and distances
+    emp_lookup = dict(zip(df_employees["destination_id"], df_employees["employees"]))
+    dist_lookup = {}
+    for _, row in df_distances.iterrows():
+        dist_lookup[(row["origin_id"], row["destination_id"])] = row["distance_km"]
+
+    # Group gemeinde_od by origin
+    od_by_origin = {}
+    for _, row in gemeinde_od.iterrows():
+        od_by_origin.setdefault(row["origin_id"], []).append(row)
+
+    weight_rows = []
+    outside_rows = []
+
+    for origin in municipalities:
+        flows = od_by_origin.get(origin, [])
+
+        # Separate known flows
+        internal_count = 0
+        known_within = {}  # dest -> count (within study area, not self)
+        outside_count = 0
+
+        for f in flows:
+            dest = f["destination_id"]
+            count = f["count"]
+            if dest == origin:
+                internal_count += count
+            elif dest in mun_set:
+                known_within[dest] = known_within.get(dest, 0) + count
+            else:
+                outside_count += count
+
+        # Gravity fill for remaining (destinations not in top-10, within study area)
+        known_dests = set(known_within.keys()) | {origin}
+        fill_dests = [m for m in municipalities if m != origin and m not in known_dests]
+
+        gravity_weights = {}
+        for dest in fill_dests:
+            emp = emp_lookup.get(dest, 0)
+            dist = dist_lookup.get((origin, dest), 50.0)
+            w = emp * np.exp(slope * dist)
+            if w > 0:
+                gravity_weights[dest] = w
+
+        # Gravity fill gets: ~27% of cross-Gemeinde Auspendler (top-10 captures ~73%)
+        known_cross_total = sum(known_within.values())
+        FILL_RATIO = 0.37  # 27% / 73%
+        gravity_fill_total = known_cross_total * FILL_RATIO
+
+        # Build raw weights (counts)
+        raw = {}
+        raw[origin] = internal_count  # internal
+
+        for dest, count in known_within.items():
+            raw[dest] = count
+
+        # Add gravity fill
+        grav_total = sum(gravity_weights.values())
+        if grav_total > 0 and gravity_fill_total > 0:
+            for dest, gw in gravity_weights.items():
+                raw[dest] = raw.get(dest, 0) + gravity_fill_total * (gw / grav_total)
+
+        # Compute outside fraction
+        total_within = sum(raw.values())
+        total_all = total_within + outside_count
+        outside_frac = outside_count / total_all if total_all > 0 else 0.0
+
+        # Normalize within-study weights to 1.0
+        if total_within > 0:
+            for dest, w in raw.items():
+                weight_rows.append({
+                    "origin_id": origin,
+                    "destination_id": dest,
+                    "weight": w / total_within,
+                })
+        else:
+            weight_rows.append({
+                "origin_id": origin,
+                "destination_id": origin,
+                "weight": 1.0,
+            })
+
+        outside_rows.append({
+            "commune_id": origin,
+            "outside_fraction": outside_frac,
+        })
+
+    df_weights = pd.DataFrame(weight_rows)
+    df_outside = pd.DataFrame(outside_rows)
+
+    return df_weights, df_outside
+
+
 def execute(context):
     # Load data
     df_distances = context.stage("bavaria.gravity.distance_matrix")
