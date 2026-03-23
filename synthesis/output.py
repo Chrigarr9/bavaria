@@ -74,6 +74,20 @@ def execute(context):
         "census_person_id", "hts_id",
         "is_munich_resident" # added for Bavaria
     ]]
+
+    # Prepare spatial data sets (needed early for outside commuter filtering)
+    df_locations = context.stage("synthesis.population.spatial.locations")[[
+        "person_id", "activity_index", "geometry"
+    ]]
+
+    # Drop persons not present in locations (outside commuters removed in locations stage)
+    valid_persons = set(df_locations["person_id"])
+    n_before = df_persons["person_id"].nunique()
+    df_persons = df_persons[df_persons["person_id"].isin(valid_persons)]
+    n_after = df_persons["person_id"].nunique()
+    if n_before != n_after:
+        print(f"Dropped {n_before - n_after} outside commuters from output ({n_before - n_after}/{n_before} persons)")
+
     if "csv" in output_formats:
         df_persons.to_csv("%s/%spersons.csv" % (output_path, output_prefix), sep = ";", index = None, lineterminator = "\n")
     if "parquet" in output_formats:
@@ -90,19 +104,6 @@ def execute(context):
     df_activities["preceding_trip_index"] = df_activities["following_trip_index"].shift(1)
     df_activities.loc[df_activities["is_first"], "preceding_trip_index"] = -1
     df_activities["preceding_trip_index"] = df_activities["preceding_trip_index"].astype(int)
-    # Prepare spatial data sets
-    df_locations = context.stage("synthesis.population.spatial.locations")[[
-        "person_id", "activity_index", "geometry"
-    ]]
-
-    # Drop persons not present in locations (outside commuters removed in locations stage)
-    valid_persons = set(df_locations["person_id"])
-    n_before = df_activities["person_id"].nunique()
-    df_activities = df_activities[df_activities["person_id"].isin(valid_persons)]
-    df_persons = df_persons[df_persons["person_id"].isin(valid_persons)]
-    n_after = df_activities["person_id"].nunique()
-    if n_before != n_after:
-        print(f"Dropped {n_before - n_after} outside commuters from output ({n_before - n_after}/{n_before} persons)")
 
     df_activities = pd.merge(df_activities, df_locations[[
         "person_id", "activity_index", "geometry"
