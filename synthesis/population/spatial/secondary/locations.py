@@ -23,6 +23,9 @@ def configure(context):
 
     DEFAULT_LEISURE_CORRECTION_FACTOR = 2.0
     context.config("leisure_correction_factor", DEFAULT_LEISURE_CORRECTION_FACTOR)
+    context.config("shop_correction_factor", 1.0)
+    context.config("other_correction_factor", 1.0)
+    context.config("secloc_k_candidates", 5)
 
 def prepare_locations(context):
     # Load persons and their primary locations
@@ -140,17 +143,22 @@ def process(context, arguments):
   # Set up discretization solver
   destinations = context.data("destinations")
   candidate_index = CandidateIndex(destinations)
-  discretization_solver = CustomDiscretizationSolver(candidate_index)
+  k_candidates = context.config("secloc_k_candidates")
+  discretization_solver = CustomDiscretizationSolver(candidate_index, k_candidates = k_candidates)
 
   # Set up distance sampler
   distance_distributions = context.data("distance_distributions")
   leisure_correction_factor = context.config("leisure_correction_factor")
-  
+  shop_correction_factor = context.config("shop_correction_factor")
+  other_correction_factor = context.config("other_correction_factor")
+
   distance_sampler = CustomDistanceSampler(
         maximum_iterations = min(1000, maximum_iterations),
         random = random,
         distributions = distance_distributions,
-        leisure_correction_factor = leisure_correction_factor)
+        leisure_correction_factor = leisure_correction_factor,
+        shop_correction_factor = shop_correction_factor,
+        other_correction_factor = other_correction_factor)
 
   # Set up relaxation solver; currently, we do not consider tail problems.
   chain_solver = GravityChainSolver(

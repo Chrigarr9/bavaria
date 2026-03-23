@@ -17,7 +17,7 @@ def calculate_feasibility(distances, direct_distance, consider_total_distance = 
     return float(max(delta, 0))
 
 class DiscretizationSolver:
-    def solve(self, problem, locations):
+    def solve(self, problem, locations, target_distances = None):
         raise NotImplementedError()
 
 class RelaxationSolver:
@@ -48,7 +48,7 @@ class AssignmentSolver:
             distance_result = self.distance_sampler.sample(problem)
 
             relaxation_result = self.relaxation_solver.solve(problem, distance_result["distances"])
-            discretization_result = self.discretization_solver.solve(problem, relaxation_result["locations"])
+            discretization_result = self.discretization_solver.solve(problem, relaxation_result["locations"], distance_result["distances"])
 
             assignment_result = self.objective.evaluate(problem, distance_result, relaxation_result, discretization_result)
 

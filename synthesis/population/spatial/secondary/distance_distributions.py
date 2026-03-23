@@ -1,8 +1,16 @@
 import numpy as np
 import pandas as pd
+import logging
+
+logger = logging.getLogger(__name__)
 
 def configure(context):
     context.stage("data.hts.selected", alias = "hts")
+
+    # Distance scaling factor for secondary activity locations (shop, leisure, errands, etc.)
+    # Scales the HTS-derived distance distributions to match regional targets.
+    # Can be a single float (applied to all modes) or left at 1.0 for no scaling.
+    context.config("secondary_distance_scale", 1.0)
 
 def calculate_bounds(values, bin_size):
     values = np.sort(values)
@@ -33,11 +41,17 @@ def execute(context):
     # Prepare data
     df_households, df_persons, df_trips = context.stage("hts")
 
+    secondary_distance_scale = context.config("secondary_distance_scale")
+
     df_trips = pd.merge(df_trips, df_persons[["person_id", "person_weight"]].rename(columns = { "person_weight": "weight" }))
     df_trips["travel_time"] = df_trips["arrival_time"] - df_trips["departure_time"]
 
     distance_column = "euclidean_distance" if "euclidean_distance" in df_trips else "routed_distance"
     df = df_trips[["mode", "travel_time", distance_column, "weight", "preceding_purpose", "following_purpose"]].rename(columns = { distance_column: "distance" })
+
+    if secondary_distance_scale != 1.0:
+        logger.info("Scaling secondary activity distances by factor %.2f", secondary_distance_scale)
+        df["distance"] = df["distance"] * secondary_distance_scale
 
     # Filtering
     primary_activities = ["home", "work", "education"]
