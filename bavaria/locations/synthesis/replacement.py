@@ -7,12 +7,15 @@ pipeline.
 """
 
 def configure(context):
-    # Copy & past from base
+    # Copy from base configure (must declare all config options that base.execute reads)
     context.stage("synthesis.population.spatial.primary.candidates")
     context.stage("synthesis.population.spatial.commute_distance")
     context.stage("synthesis.population.spatial.home.locations")
     context.stage("synthesis.locations.work")
     context.stage("synthesis.locations.education")
+
+    context.config("education_location_source", "bpe")
+    context.config("shared_facility_assignment", True)
 
     # Custom data
     context.stage("bavaria.locations.synthesis.education")
