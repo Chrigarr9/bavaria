@@ -156,36 +156,34 @@ def build_pendler_constrained_matrix(municipalities, df_employees, df_distances,
 
 def build_gemeinde_constrained_matrix(municipalities, df_employees, df_distances,
                                        gemeinde_od, study_kreise, slope,
-                                       total_auspendler=None):
+                                       total_auspendler=None,
+                                       pendler_outside_fractions=None):
     """
-    Build Gemeinde x Gemeinde OD matrix using exact flows where known + gravity fill.
+    Build Gemeinde x Gemeinde OD matrix using three data layers:
 
-    For each origin:
-    1. Internal flow from IOP data
-    2. Top-10 cross-Gemeinde flows from Verfl data (within study area)
-    3. Gravity fill for remaining Auspendler (employee x distance decay,
-       excluding already-assigned destinations)
-    4. Outside flows tracked for population dropping
+    1. IOP (exact internal commuter counts per Gemeinde)
+    2. Verfl top-10 (exact cross-Gemeinde flows, within + outside study area)
+    3. Kreis-level Pendler outside fraction (for the remaining tail)
+    4. Gravity fill only for the small within-study remainder not in top-10
+
+    The outside fraction for the remaining tail (not in top-10) comes from
+    the Kreis-level Pendler data, not from a proportional assumption.
 
     Args:
+        pendler_outside_fractions: Dict {kreis_5digit: outside_fraction} from
+            Kreis-level Pendler shares. Used for the remaining tail's outside split.
         total_auspendler: Dict {commune_id: total_auspendler_count} from Eckzahlen.
-            If provided, gravity fill = total_auspendler - top10_sum (exact).
-            If None, uses heuristic: gravity_fill = top10_cross * 0.37.
 
     Returns:
-        (df_weights, df_outside) where:
-        - df_weights: DataFrame [origin_id, destination_id, weight] summing to 1.0 per origin
-        - df_outside: DataFrame [commune_id, outside_fraction]
+        (df_weights, df_outside)
     """
     mun_set = set(municipalities)
 
-    # Index employees and distances
     emp_lookup = dict(zip(df_employees["destination_id"], df_employees["employees"]))
     dist_lookup = {}
     for _, row in df_distances.iterrows():
         dist_lookup[(row["origin_id"], row["destination_id"])] = row["distance_km"]
 
-    # Group gemeinde_od by origin
     od_by_origin = {}
     for _, row in gemeinde_od.iterrows():
         od_by_origin.setdefault(row["origin_id"], []).append(row)
@@ -195,10 +193,11 @@ def build_gemeinde_constrained_matrix(municipalities, df_employees, df_distances
 
     for origin in municipalities:
         flows = od_by_origin.get(origin, [])
+        origin_kreis = origin[:5]
 
-        # Separate known flows
+        # Layer 1+2: Separate IOP (internal) and Verfl (cross-Gemeinde)
         internal_count = 0
-        known_within = {}  # dest -> count (within study area, not self)
+        known_within = {}
         outside_count = 0
 
         for f in flows:
@@ -211,7 +210,27 @@ def build_gemeinde_constrained_matrix(municipalities, df_employees, df_distances
             else:
                 outside_count += count
 
-        # Gravity fill for remaining (destinations not in top-10, within study area)
+        # Compute remaining tail (not in IOP + top-10)
+        known_cross_total = sum(known_within.values())
+        top10_total = known_cross_total + outside_count
+
+        if total_auspendler is not None and origin in total_auspendler:
+            remaining = max(0, total_auspendler[origin] - top10_total)
+        else:
+            remaining = known_cross_total * 0.37
+
+        # Layer 3: Split remaining using Kreis-level outside fraction
+        if pendler_outside_fractions is not None and origin_kreis in pendler_outside_fractions:
+            kreis_outside_frac = pendler_outside_fractions[origin_kreis]
+        else:
+            # Fallback: use the top-10 within/outside ratio
+            kreis_outside_frac = outside_count / top10_total if top10_total > 0 else 0.5
+
+        remaining_outside = remaining * kreis_outside_frac
+        remaining_within = remaining * (1 - kreis_outside_frac)
+        outside_count += remaining_outside
+
+        # Layer 4: Gravity fill for the within-study remainder
         known_dests = set(known_within.keys()) | {origin}
         fill_dests = [m for m in municipalities if m != origin and m not in known_dests]
 
@@ -223,39 +242,19 @@ def build_gemeinde_constrained_matrix(municipalities, df_employees, df_distances
             if w > 0:
                 gravity_weights[dest] = w
 
-        # Gravity fill: remaining Auspendler not in top-10
-        known_cross_total = sum(known_within.values())
-        top10_total = known_cross_total + outside_count  # all top-10 (within + outside)
-
-        if total_auspendler is not None and origin in total_auspendler:
-            # Exact remaining = total Auspendler - top-10 sum
-            remaining = max(0, total_auspendler[origin] - top10_total)
-            # Split remaining proportionally: the tail likely has similar
-            # within/outside ratio as the top-10
-            if top10_total > 0:
-                within_ratio = known_cross_total / top10_total
-            else:
-                within_ratio = 0.5
-            gravity_fill_total = remaining * within_ratio
-            outside_count += remaining * (1 - within_ratio)  # add tail's outside portion
-        else:
-            # Heuristic fallback: top-10 captures ~73% of Auspendler
-            gravity_fill_total = known_cross_total * 0.37
-
         # Build raw weights (counts)
         raw = {}
-        raw[origin] = internal_count  # internal
+        raw[origin] = internal_count
 
         for dest, count in known_within.items():
             raw[dest] = count
 
-        # Add gravity fill
         grav_total = sum(gravity_weights.values())
-        if grav_total > 0 and gravity_fill_total > 0:
+        if grav_total > 0 and remaining_within > 0:
             for dest, gw in gravity_weights.items():
-                raw[dest] = raw.get(dest, 0) + gravity_fill_total * (gw / grav_total)
+                raw[dest] = raw.get(dest, 0) + remaining_within * (gw / grav_total)
 
-        # Compute outside fraction
+        # Outside fraction
         total_within = sum(raw.values())
         total_all = total_within + outside_count
         outside_frac = outside_count / total_all if total_all > 0 else 0.0
@@ -318,7 +317,10 @@ def execute(context):
 
     if gemeinde_od_path is not None:
         # === GEMEINDE-LEVEL OD MODE (most precise) ===
-        from bavaria.gravity.pendler_data import parse_gemeinde_od, load_total_auspendler
+        from bavaria.gravity.pendler_data import (
+            parse_gemeinde_od, load_total_auspendler,
+            parse_pendler_matrix, load_employed_at_wohnort
+        )
 
         data_path = context.config("data_path")
         full_verfl_path = "{}/{}".format(data_path, gemeinde_od_path)
@@ -329,7 +331,7 @@ def execute(context):
 
         gemeinde_od = parse_gemeinde_od(full_verfl_path, full_iop_path, set(municipalities))
 
-        # Load exact Auspendler totals from Eckzahlen for precise gravity fill
+        # Load exact Auspendler totals from Eckzahlen
         eckzahlen_path = context.config("gemeinde_eckzahlen_path")
         ausp_totals = None
         if eckzahlen_path is not None:
@@ -337,13 +339,27 @@ def execute(context):
             ausp_totals = load_total_auspendler(full_eck_path, set(municipalities))
             print(f"Loaded Auspendler totals for {len(ausp_totals)} Gemeinden from Eckzahlen")
 
+        # Load Kreis-level outside fractions for the remaining tail
+        pendler_outside = None
+        if context.config("pendler_od_path") is not None:
+            full_pendler_path = "{}/{}".format(data_path, context.config("pendler_od_path"))
+            a6502c_path = "{}/{}".format(data_path, context.config("bavaria.work_flow_path"))
+            wohnort = load_employed_at_wohnort(a6502c_path, study_kreise)
+            pendler_shares = parse_pendler_matrix(full_pendler_path, study_kreise, wohnort)
+            pendler_outside = {}
+            for _, row in pendler_shares.iterrows():
+                if row["destination_kreis"] == "_outside":
+                    pendler_outside[row["origin_kreis"]] = row["share"]
+            print(f"Loaded Kreis-level outside fractions for {len(pendler_outside)} Kreise")
+
         slope = context.config("gravity_slope")
         df_work_matrix, df_outside = build_gemeinde_constrained_matrix(
             municipalities,
             df_employees.reset_index() if "destination_id" not in df_employees.columns else df_employees,
             df_distances.reset_index() if "origin_id" not in df_distances.columns else df_distances,
             gemeinde_od, study_kreise, slope,
-            total_auspendler=ausp_totals
+            total_auspendler=ausp_totals,
+            pendler_outside_fractions=pendler_outside
         )
 
         n_affected = (df_outside["outside_fraction"] > 0).sum()
