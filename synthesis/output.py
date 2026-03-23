@@ -158,6 +158,9 @@ def execute(context):
         }
     )
 
+    # Filter to valid persons (outside commuters already removed above)
+    df_trips = df_trips[df_trips["person_id"].isin(valid_persons)]
+
     df_trips["preceding_activity_index"] = df_trips["trip_index"]
     df_trips["following_activity_index"] = df_trips["trip_index"] + 1
 
