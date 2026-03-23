@@ -22,6 +22,7 @@ def configure(context):
     context.config("pendler_od_path", None)
     context.config("gemeinde_od_path", None)
     context.config("gemeinde_iop_path", None)
+    context.config("gemeinde_eckzahlen_path", None)
     context.config("data_path")
     context.config("bavaria.work_flow_path", "bavaria/a6502c_202200.xlsx")
 
@@ -154,7 +155,8 @@ def build_pendler_constrained_matrix(municipalities, df_employees, df_distances,
 
 
 def build_gemeinde_constrained_matrix(municipalities, df_employees, df_distances,
-                                       gemeinde_od, study_kreise, slope):
+                                       gemeinde_od, study_kreise, slope,
+                                       total_auspendler=None):
     """
     Build Gemeinde x Gemeinde OD matrix using exact flows where known + gravity fill.
 
@@ -164,6 +166,11 @@ def build_gemeinde_constrained_matrix(municipalities, df_employees, df_distances
     3. Gravity fill for remaining Auspendler (employee x distance decay,
        excluding already-assigned destinations)
     4. Outside flows tracked for population dropping
+
+    Args:
+        total_auspendler: Dict {commune_id: total_auspendler_count} from Eckzahlen.
+            If provided, gravity fill = total_auspendler - top10_sum (exact).
+            If None, uses heuristic: gravity_fill = top10_cross * 0.37.
 
     Returns:
         (df_weights, df_outside) where:
@@ -216,10 +223,16 @@ def build_gemeinde_constrained_matrix(municipalities, df_employees, df_distances
             if w > 0:
                 gravity_weights[dest] = w
 
-        # Gravity fill gets: ~27% of cross-Gemeinde Auspendler (top-10 captures ~73%)
+        # Gravity fill: remaining Auspendler not in top-10
         known_cross_total = sum(known_within.values())
-        FILL_RATIO = 0.37  # 27% / 73%
-        gravity_fill_total = known_cross_total * FILL_RATIO
+        top10_total = known_cross_total + outside_count  # all top-10 (within + outside)
+
+        if total_auspendler is not None and origin in total_auspendler:
+            # Exact: gravity fill = total Auspendler - top-10 sum
+            gravity_fill_total = max(0, total_auspendler[origin] - top10_total)
+        else:
+            # Heuristic fallback: top-10 captures ~73% of Auspendler
+            gravity_fill_total = known_cross_total * 0.37
 
         # Build raw weights (counts)
         raw = {}
@@ -297,7 +310,7 @@ def execute(context):
 
     if gemeinde_od_path is not None:
         # === GEMEINDE-LEVEL OD MODE (most precise) ===
-        from bavaria.gravity.pendler_data import parse_gemeinde_od
+        from bavaria.gravity.pendler_data import parse_gemeinde_od, load_total_auspendler
 
         data_path = context.config("data_path")
         full_verfl_path = "{}/{}".format(data_path, gemeinde_od_path)
@@ -308,12 +321,21 @@ def execute(context):
 
         gemeinde_od = parse_gemeinde_od(full_verfl_path, full_iop_path, set(municipalities))
 
+        # Load exact Auspendler totals from Eckzahlen for precise gravity fill
+        eckzahlen_path = context.config("gemeinde_eckzahlen_path")
+        ausp_totals = None
+        if eckzahlen_path is not None:
+            full_eck_path = "{}/{}".format(data_path, eckzahlen_path)
+            ausp_totals = load_total_auspendler(full_eck_path, set(municipalities))
+            print(f"Loaded Auspendler totals for {len(ausp_totals)} Gemeinden from Eckzahlen")
+
         slope = context.config("gravity_slope")
         df_work_matrix, df_outside = build_gemeinde_constrained_matrix(
             municipalities,
             df_employees.reset_index() if "destination_id" not in df_employees.columns else df_employees,
             df_distances.reset_index() if "origin_id" not in df_distances.columns else df_distances,
-            gemeinde_od, study_kreise, slope
+            gemeinde_od, study_kreise, slope,
+            total_auspendler=ausp_totals
         )
 
         n_affected = (df_outside["outside_fraction"] > 0).sum()

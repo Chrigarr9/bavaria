@@ -55,6 +55,7 @@ config:
   # Gemeinde-level Pendlerrechnung OD data (overrides Kreis-level when set)
   gemeinde_od_path: bavaria/2024_Verfl_L09.csv
   gemeinde_iop_path: bavaria/2024_IOP_Karte_L00.csv
+  gemeinde_eckzahlen_path: bavaria/19321-001r.xlsx
 
   gtfs_path: gtfs
   osm_path: osm

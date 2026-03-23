@@ -128,6 +128,37 @@ def parse_gemeinde_od(verfl_path, iop_path, study_municipalities):
     return pd.DataFrame(rows)
 
 
+def load_total_auspendler(eckzahlen_path, study_municipalities):
+    """
+    Load total Auspendler per Gemeinde from Pendlerrechnung Eckzahlen.
+
+    Args:
+        eckzahlen_path: Path to 19321-001r.xlsx
+        study_municipalities: Set of 12-digit ARS commune_ids
+
+    Returns:
+        Dict {ars_12digit: total_auspendler_count}
+    """
+    df = pd.read_excel(eckzahlen_path, header=None, skiprows=7)
+    df[0] = df[0].astype(str).str.strip()
+    df[2] = pd.to_numeric(df[2], errors="coerce")  # Auspendelnde Insgesamt
+
+    # Build AGS->ARS mapping from study_municipalities
+    # ARS(12) = AGS[:5] + verband(4) + AGS[5:8], so AGS = ARS[:5] + ARS[9:]
+    ags_to_ars = {}
+    for ars in study_municipalities:
+        ags = ars[:5] + ars[9:]
+        ags_to_ars[ags] = ars
+
+    result = {}
+    for _, row in df.iterrows():
+        ags = row[0]
+        if ags in ags_to_ars and pd.notna(row[2]):
+            result[ags_to_ars[ags]] = int(row[2])
+
+    return result
+
+
 def load_employed_at_wohnort(a6502c_path, study_kreise):
     """
     Load Beschaeftigte am Wohnort (employed residents) per Kreis from a6502c.
