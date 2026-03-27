@@ -26,6 +26,7 @@ def configure(context):
     context.config("shop_correction_factor", 1.0)
     context.config("other_correction_factor", 1.0)
     context.config("secloc_k_candidates", 5)
+    context.config("use_mid_distances", False)
 
 def prepare_locations(context):
     # Load persons and their primary locations
@@ -84,7 +85,7 @@ def resample_distributions(distributions, factors):
             distribution["cdf"] = resample_cdf(distribution["cdf"], factors[mode])
 
 from synthesis.population.spatial.secondary.rda import AssignmentSolver, DiscretizationErrorObjective, GravityChainSolver, AngularTailSolver, GeneralRelaxationSolver
-from synthesis.population.spatial.secondary.components import CustomDistanceSampler, CustomDiscretizationSolver, CandidateIndex, CustomFreeChainSolver
+from synthesis.population.spatial.secondary.components import CustomDistanceSampler, CustomDiscretizationSolver, CandidateIndex, CustomFreeChainSolver, MiDDistanceSampler
 
 def execute(context):
     # Load trips and primary locations
@@ -93,13 +94,17 @@ def execute(context):
     df_primary, crs = prepare_locations(context)
 
     # Prepare data
-    distance_distributions = context.stage("synthesis.population.spatial.secondary.distance_distributions")
-    destinations = prepare_destinations(context)
+    use_mid = context.config("use_mid_distances")
 
-    # Resampling for calibration
-    resample_distributions(distance_distributions, dict(
-        car = 0.0, car_passenger = 0.1, pt = 0.5, bicycle = 0.0, walk = -0.5
-    ))
+    if use_mid:
+        distance_distributions = None  # Not needed — MiDDistanceSampler has built-in CDFs
+    else:
+        distance_distributions = context.stage("synthesis.population.spatial.secondary.distance_distributions")
+        resample_distributions(distance_distributions, dict(
+            car = 0.0, car_passenger = 0.1, pt = 0.5, bicycle = 0.0, walk = -0.5
+        ))
+
+    destinations = prepare_destinations(context)
 
     # Segment into subsamples
     processes = context.config("processes")
@@ -146,26 +151,34 @@ def process(context, arguments):
   # Set up RNG
   random = np.random.RandomState(random_seed)
   maximum_iterations = context.config("secloc_maximum_iterations")
+  use_mid = context.config("use_mid_distances")
 
   # Set up discretization solver
   destinations = context.data("destinations")
   candidate_index = CandidateIndex(destinations)
   k_candidates = context.config("secloc_k_candidates")
-  discretization_solver = CustomDiscretizationSolver(candidate_index, k_candidates = k_candidates)
+  discretization_solver = CustomDiscretizationSolver(
+      candidate_index, k_candidates=k_candidates, use_ring_query=use_mid
+  )
 
   # Set up distance sampler
-  distance_distributions = context.data("distance_distributions")
-  leisure_correction_factor = context.config("leisure_correction_factor")
-  shop_correction_factor = context.config("shop_correction_factor")
-  other_correction_factor = context.config("other_correction_factor")
+  if use_mid:
+      distance_sampler = MiDDistanceSampler(
+          random=random, maximum_iterations=min(1000, maximum_iterations)
+      )
+  else:
+      distance_distributions = context.data("distance_distributions")
+      leisure_correction_factor = context.config("leisure_correction_factor")
+      shop_correction_factor = context.config("shop_correction_factor")
+      other_correction_factor = context.config("other_correction_factor")
 
-  distance_sampler = CustomDistanceSampler(
-        maximum_iterations = min(1000, maximum_iterations),
-        random = random,
-        distributions = distance_distributions,
-        leisure_correction_factor = leisure_correction_factor,
-        shop_correction_factor = shop_correction_factor,
-        other_correction_factor = other_correction_factor)
+      distance_sampler = CustomDistanceSampler(
+          maximum_iterations=min(1000, maximum_iterations),
+          random=random,
+          distributions=distance_distributions,
+          leisure_correction_factor=leisure_correction_factor,
+          shop_correction_factor=shop_correction_factor,
+          other_correction_factor=other_correction_factor)
 
   # Set up relaxation solver; currently, we do not consider tail problems.
   chain_solver = GravityChainSolver(
