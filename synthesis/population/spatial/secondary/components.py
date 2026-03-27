@@ -35,35 +35,57 @@ class CustomDistanceSampler(rda.FeasibleDistanceSampler):
 
         return distances
 
-class MiDDistanceSampler(rda.FeasibleDistanceSampler):
-    """Sample trip distances from MiD 2017 Bayern empirical CDFs per activity purpose.
+class QuantileMappedDistanceSampler(rda.FeasibleDistanceSampler):
+    """Sample from ENTD chains, then quantile-map to MiD 2017 Bayern CDFs per purpose.
 
-    Replaces ENTD-based sampling with German survey data that matches
-    Bavarian travel patterns. No purpose correction factors needed.
+    Preserves ENTD chain structure (mode, travel_time, feasibility) while
+    calibrating marginal distance distributions to match Bavarian targets.
+
+    Algorithm per leg:
+      1. Sample d_entd from ENTD CDF (mode + travel_time band, as before)
+      2. Find quantile: p = ENTD_CDF(d_entd)  ("30th percentile shop trip")
+      3. Map to MiD:  d_mid = MiD_CDF_inverse(p)  ("30th percentile = 2.8km in Bavaria")
 
     Source: MiD 2017 Kurzreport Bayern (Bayerisches Staatsministerium)
-    CDFs: routed km converted to euclidean meters (routed / 1.3 * 1000).
     """
 
-    # (euclidean_meters, cumulative_probability) per purpose
-    _DISTANCES_M = np.array([0, 769, 1538, 3846, 7692, 15385, 38462])
+    _MID_DISTANCES_M = np.array([0, 769, 1538, 3846, 7692, 15385, 38462])
 
-    _CDFS = {
+    _MID_CDFS = {
         "shop":      np.array([0, .25, .44, .72, .89, .97, 1.0]),
         "leisure":   np.array([0, .18, .30, .50, .66, .82, .95]),
         "other":     np.array([0, .28, .41, .60, .76, .88, .97]),
     }
 
-    def __init__(self, random, maximum_iterations=1000):
+    def __init__(self, random, distributions, maximum_iterations=1000):
         super().__init__(random=random, maximum_iterations=maximum_iterations)
+        self.random = random
+        self.distributions = distributions
 
     def sample_distances(self, problem):
         distances = np.zeros(len(problem["modes"]))
-        # zip constrains to shortest list (modes may differ from purposes in length)
-        for i, (_, purpose) in enumerate(zip(problem["modes"], problem["purposes"])):
-            cdf = self._CDFS.get(purpose, self._CDFS["other"])
-            u = self.random.random_sample()
-            distances[i] = np.interp(u, cdf, self._DISTANCES_M)
+
+        for index, (mode, travel_time, purpose) in enumerate(
+            zip(problem["modes"], problem["travel_times"], problem["purposes"])
+        ):
+            # Step 1: Sample from ENTD (identical to CustomDistanceSampler)
+            mode_distribution = self.distributions[mode]
+            bound_index = np.count_nonzero(travel_time > mode_distribution["bounds"])
+            band = mode_distribution["distributions"][bound_index]
+
+            sample_index = np.count_nonzero(self.random.random_sample() > band["cdf"])
+            d_entd = band["values"][sample_index]
+
+            # Step 2: Quantile-map to MiD if purpose has a target CDF
+            mid_cdf = self._MID_CDFS.get(purpose)
+            if mid_cdf is not None:
+                # Find quantile of d_entd in the ENTD band
+                p = np.interp(d_entd, band["values"], band["cdf"])
+                # Inverse MiD CDF at that quantile
+                distances[index] = np.interp(p, mid_cdf, self._MID_DISTANCES_M)
+            else:
+                distances[index] = d_entd
+
         return distances
 
 class CandidateIndex:
@@ -137,13 +159,20 @@ class CustomDiscretizationSolver(rda.DiscretizationSolver):
         self.k_candidates = k_candidates
         self.use_ring_query = use_ring_query
 
+    # Diagnostics counters (class-level, shared across instances in same process)
+    _diag_ring_hit = 0
+    _diag_ring_fallback = 0
+    _diag_target_vs_actual = []  # (target_dist, actual_dist, purpose)
+
     def _ring_query_with_fallback(self, purpose, anchor, target_dist, relaxed_location):
         """Ring query with progressive tolerance widening, fallback to K-nearest."""
         for tolerance in [0.3, 0.6, 1.0]:
             candidates = self.index.query_ring(purpose, anchor, target_dist, tolerance=tolerance)
             if candidates:
+                CustomDiscretizationSolver._diag_ring_hit += 1
                 return candidates
         # Final fallback: K-nearest from relaxed location
+        CustomDiscretizationSolver._diag_ring_fallback += 1
         return self.index.query_k(purpose, relaxed_location, k=max(self.k_candidates, 10))
 
     def solve(self, problem, locations, target_distances = None):
@@ -165,6 +194,11 @@ class CustomDiscretizationSolver(rda.DiscretizationSolver):
                 )
                 # Among ring candidates, prefer closest to relaxed location (chain direction)
                 best_ident, best_loc = min(candidates, key=lambda c: la.norm(c[1] - location))
+                # Track target vs actual
+                actual_dist = la.norm(best_loc - prev_anchor)
+                CustomDiscretizationSolver._diag_target_vs_actual.append(
+                    (target_distances[i], actual_dist, purpose)
+                )
 
             elif has_target and self.k_candidates > 1:
                 # Legacy: K-nearest from relaxed location

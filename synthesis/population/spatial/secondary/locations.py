@@ -85,7 +85,7 @@ def resample_distributions(distributions, factors):
             distribution["cdf"] = resample_cdf(distribution["cdf"], factors[mode])
 
 from synthesis.population.spatial.secondary.rda import AssignmentSolver, DiscretizationErrorObjective, GravityChainSolver, AngularTailSolver, GeneralRelaxationSolver
-from synthesis.population.spatial.secondary.components import CustomDistanceSampler, CustomDiscretizationSolver, CandidateIndex, CustomFreeChainSolver, MiDDistanceSampler
+from synthesis.population.spatial.secondary.components import CustomDistanceSampler, CustomDiscretizationSolver, CandidateIndex, CustomFreeChainSolver, QuantileMappedDistanceSampler
 
 def execute(context):
     # Load trips and primary locations
@@ -93,13 +93,12 @@ def execute(context):
     df_trips["travel_time"] = df_trips["arrival_time"] - df_trips["departure_time"]
     df_primary, crs = prepare_locations(context)
 
-    # Prepare data
+    # Prepare data — always load ENTD distributions (needed for quantile mapping too)
     use_mid = context.config("use_mid_distances")
+    distance_distributions = context.stage("synthesis.population.spatial.secondary.distance_distributions")
 
-    if use_mid:
-        distance_distributions = None  # Not needed — MiDDistanceSampler has built-in CDFs
-    else:
-        distance_distributions = context.stage("synthesis.population.spatial.secondary.distance_distributions")
+    if not use_mid:
+        # Legacy mode: resample ENTD distributions for calibration
         resample_distributions(distance_distributions, dict(
             car = 0.0, car_passenger = 0.1, pt = 0.5, bicycle = 0.0, walk = -0.5
         ))
@@ -162,12 +161,14 @@ def process(context, arguments):
   )
 
   # Set up distance sampler
+  distance_distributions = context.data("distance_distributions")
+
   if use_mid:
-      distance_sampler = MiDDistanceSampler(
-          random=random, maximum_iterations=min(1000, maximum_iterations)
+      distance_sampler = QuantileMappedDistanceSampler(
+          random=random, distributions=distance_distributions,
+          maximum_iterations=min(1000, maximum_iterations)
       )
   else:
-      distance_distributions = context.data("distance_distributions")
       leisure_correction_factor = context.config("leisure_correction_factor")
       shop_correction_factor = context.config("shop_correction_factor")
       other_correction_factor = context.config("other_correction_factor")
@@ -234,4 +235,30 @@ def process(context, arguments):
   assert not df_locations["geometry"].isna().any()
 
   df_convergence = pd.DataFrame.from_records(df_convergence, columns = ["valid", "size"])
+
+  # Print ring query diagnostics
+  if use_mid:
+      hits = CustomDiscretizationSolver._diag_ring_hit
+      falls = CustomDiscretizationSolver._diag_ring_fallback
+      total = hits + falls
+      diag = CustomDiscretizationSolver._diag_target_vs_actual
+      if total > 0:
+          print(f"[Ring diag] hit={hits} ({hits/total*100:.0f}%), fallback={falls} ({falls/total*100:.0f}%)")
+      if diag:
+          import numpy as _np
+          targets = _np.array([d[0] for d in diag])
+          actuals = _np.array([d[1] for d in diag])
+          errors = _np.abs(actuals - targets)
+          print(f"[Ring diag] target: mean={targets.mean():.0f}m, actual: mean={actuals.mean():.0f}m, "
+                f"error: mean={errors.mean():.0f}m, median={_np.median(errors):.0f}m")
+          for p in ["shop", "leisure", "other"]:
+              mask = [d[2] == p for d in diag]
+              if any(mask):
+                  t = targets[mask]
+                  a = actuals[mask]
+                  e = errors[mask]
+                  short = (a < 769).sum()  # <1km routed
+                  print(f"  {p:>8}: N={len(t)}, target_mean={t.mean():.0f}m, actual_mean={a.mean():.0f}m, "
+                        f"<1km_routed={short/len(t)*100:.1f}%, error_mean={e.mean():.0f}m")
+
   return df_locations, df_convergence
