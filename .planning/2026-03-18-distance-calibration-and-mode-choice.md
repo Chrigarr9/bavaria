@@ -372,3 +372,121 @@ Java code created and compiled. Jar rebuilt. Config updated. **Not yet validated
 - Bavaria's `RunSimulation` doesn't produce `eqasim_counts.csv` or `urban.csv`. Custom objectives and dummy file generation bridge the gap.
 - 1% sample is practical for calibration (~5 min/eval). 10% is 6× slower with minimal accuracy gain for ASC calibration.
 - Traffic count calibration is limited by missing through-traffic, freight, and commercial vehicles. Scaling reference counts to ~70% accounts for this.
+
+---
+
+## 11. MiD 2017 Bayern Distance Calibration (2026-03-27)
+
+> **Date:** 2026-03-27
+> **Context:** Regenerated 100% Bavaria population still had 15-35pp too many short trips (<1km) across all purposes compared to MiD 2017 Bayern. The per-purpose correction factors from Section 3 improved medium distances but couldn't fix the distribution shape — they scale linearly but the ENTD-to-MiD mismatch is non-linear.
+
+### 11.1 Problem Statement
+
+Population comparison notebook (`population_comparison.ipynb`) showed systematic short-trip overrepresentation vs MiD 2017 Bayern (routed km):
+
+| Purpose | Pipeline <1km | MiD <1km | Gap |
+|---------|:------------:|:--------:|:---:|
+| Work | 20.6% | 5.0% | +15.6pp |
+| Education | 35.9% | 22.0% | +13.9pp |
+| Shop | 30.2% | 25.0% | +5.2pp |
+| Leisure | 33.1% | 18.0% | +15.1pp |
+
+Root cause: the pipeline samples distances from **French ENTD** survey data. French travel patterns (shorter trips, different chain structures) don't match rural Bavaria.
+
+### 11.2 Approach Evolution — Three Iterations
+
+#### Iteration 1: Independent MiD CDF Sampling + Ring Search
+
+**Idea:** Replace ENTD CDFs entirely with MiD 2017 Bayern CDFs. Sample distances directly by purpose. Add ring-based facility search (KDTree `query_radius`) instead of K-nearest to find facilities at the correct distance.
+
+**Implementation:**
+- `MiDDistanceSampler`: inverse CDF sampling via `np.interp(u, mid_cdf, mid_distances)` per purpose
+- `CandidateIndex.query_ring()`: search facilities in `[target*(1-tol), target*(1+tol)]` from chain anchor
+- Progressive fallback: tolerance 0.3 → 0.6 → 1.0 → K-nearest
+- `commute_distance.py`: MiD work/education CDFs for primary commute targets
+
+**Results:**
+- Ring query: 93% hit rate, median error 109-235m — excellent facility matching
+- But: **74% chain feasibility** — independent sampling breaks chain geometry
+- For round-trip chains (home→shop→home), independently sampled d1 and d2 are rarely equal (required by triangle inequality with direct_distance≈0). The feasibility loop biases toward short distances because short pairs are more likely to be similar.
+
+**Decision:** Ring-based search works great (keep it). Independent sampling doesn't (replace it).
+
+#### Iteration 2: Quantile Mapping (ENTD Chains + MiD CDFs)
+
+**Key insight from user:** The ENTD survey data contains real observed trip chains that are inherently feasible. Keep the ENTD chain structure and apply a CDF-to-CDF transform to calibrate marginal distances to MiD.
+
+**Algorithm per leg:**
+1. Sample `d_entd` from ENTD CDF (mode + travel_time band, preserving chain coordination)
+2. Find quantile: `p = ENTD_CDF(d_entd)` — "this is the 30th percentile shop trip in ENTD"
+3. Map to MiD: `d_mid = MiD_CDF_inverse(p)` — "the 30th percentile shop trip in Bavaria is 2.8km"
+
+**Implementation:** `QuantileMappedDistanceSampler` in `components.py`
+
+**Results:** Chain feasibility restored (~100%), but distances ~5-10pp off MiD targets. Investigation revealed the ENTD CDF per band has only **37 unique distance values** (from 648 survey records). The quantile mapping is lossy — many different `u` draws map to the same ENTD distance, which maps to the same quantile, collapsing the MiD target distribution. The ENTD CDF acts as a 37-step bottleneck.
+
+**Decision:** Accept the imprecision. The alternative (bypassing ENTD) breaks chain feasibility. The quantile mapping is the best achievable with ENTD chain data and aggregated MiD CDFs.
+
+#### Iteration 3: What Actually Matters — DRT Demand Filter
+
+**Key insight from user:** The DRT demand extraction (`RunBavaria30kmDemandExtraction`) uses `CommuteFilter.COMMUTES_AND_EDUCATION` — it only extracts home↔work and home↔education trips. Intermediate chain trips (work→shop→work) are filtered out.
+
+The "all consecutive trips" metric was distorted by French chain patterns (more midday errands), not by distance calibration errors. These sandwich trips are naturally short (you don't drive 15km for a lunch-break errand) and are excluded from DRT demand.
+
+**Final validation — DRT-relevant trips only:**
+
+| | <1km | MiD | <2km | MiD | <5km | MiD | <10km | MiD |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| **Commute** | 4.5% | 5.0% | 11.8% | 13.0% | 29.6% | 32.0% | 54.4% | 53.0% |
+| **Education** | 17.7% | 22.0% | 36.5% | 38.0% | 65.1% | 58.0% | 76.5% | 77.0% |
+
+**Commute trips match MiD almost exactly.** Education is within 4pp across all bands.
+
+### 11.3 Final Implementation
+
+| File | Change |
+|------|--------|
+| `components.py` | Added `QuantileMappedDistanceSampler` (ENTD chain + MiD quantile mapping) |
+| `components.py` | Added `CandidateIndex.query_ring()` (KDTree radius search with progressive fallback) |
+| `components.py` | Updated `CustomDiscretizationSolver` with `use_ring_query` parameter |
+| `locations.py` | Config `use_mid_distances` switches between legacy ENTD and quantile-mapped mode |
+| `commute_distance.py` | MiD work/education CDFs for primary commute distance targets |
+| `config_kelheim_30km_*.yml` | `use_mid_distances: true`, correction factors reset to 1.0 |
+
+**MiD CDF reference data** (hardcoded, from MiD 2017 Kurzreport Bayern, routed km / 1.3 * 1000 → euclidean meters):
+
+| Euclidean m | 0 | 769 | 1538 | 3846 | 7692 | 15385 | 38462 |
+|-------------|---|-----|------|------|------|-------|-------|
+| Work | 0 | .05 | .13 | .32 | .53 | .76 | .95 |
+| Education | 0 | .22 | .38 | .58 | .77 | .93 | .99 |
+| Shop | 0 | .25 | .44 | .72 | .89 | .97 | 1.0 |
+| Leisure | 0 | .18 | .30 | .50 | .66 | .82 | .95 |
+| Other | 0 | .28 | .41 | .60 | .76 | .88 | .97 |
+
+### 11.4 Key Learnings
+
+**On distance calibration approaches:**
+- Linear correction factors (Section 3) scale the mean but can't fix distribution shape. Quantile mapping can, but requires sufficient CDF resolution.
+- The ENTD CDF has only ~37 unique values per mode/travel_time band — too coarse for precise quantile mapping. This is a fundamental data limitation, not an algorithmic one.
+- Chain feasibility is non-negotiable. Independent per-leg sampling (even from perfect CDFs) produces 26% infeasible chains because the triangle inequality requires correlated distances within a chain.
+
+**On what matters for DRT demand:**
+- The "all consecutive trips" metric mixes primary trips (home→work) with chain-internal trips (work→shop→work). These have fundamentally different distance characteristics.
+- Chain-internal trips are naturally short (quick errands near anchor points) and are correctly short — a 15km shop trip between two work stints is unrealistic.
+- The DRT demand extraction already filters for commute and education trips only. The French chain structure issue (more midday errands than Bavarians) doesn't affect DRT demand.
+- **Primary (home↔work, home↔education) distances are the only ones that matter for DRT, and they match MiD within 1-4pp.**
+
+**On the ring-based facility search:**
+- 93% hit rate with median error 109-235m — KDTree `query_radius` with progressive tolerance widening is very effective for facility matching in rural Bavaria.
+- The 7% fallback to K-nearest occurs in sparse areas where no facility exists within ±100% of the target distance.
+- Ring search from chain anchor (not relaxed location) is the correct approach — it directly matches the target distance rather than depending on the relaxation solver's intermediate placement.
+
+### 11.5 Updated Scenario Inventory
+
+| Directory | Sample | Distance fixes | MiD calibration | Bike fix | Walk cap |
+|-----------|:------:|:--------------:|:---------------:|:--------:|:--------:|
+| `output/kelheim_30km_100pct/` | 100% | No | No | No | No |
+| `output/kelheim_30km_10pct/` | 10% | No | No | No | No |
+| `output/kelheim_30km_10pct_v7/` | 10% | v7 factors | No | No | No |
+| `output/kelheim_30km_1pct/` | 1% | v7 + quantile map | **Yes** | Yes | No |
+| `output/populations/` | 1-100% | Pre-calibration XMLs | No | No | No |
