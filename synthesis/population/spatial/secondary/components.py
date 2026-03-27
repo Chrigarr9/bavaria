@@ -59,7 +59,8 @@ class MiDDistanceSampler(rda.FeasibleDistanceSampler):
 
     def sample_distances(self, problem):
         distances = np.zeros(len(problem["modes"]))
-        for i, purpose in enumerate(problem["purposes"]):
+        # zip constrains to shortest list (modes may differ from purposes in length)
+        for i, (_, purpose) in enumerate(zip(problem["modes"], problem["purposes"])):
             cdf = self._CDFS.get(purpose, self._CDFS["other"])
             u = self.random.random_sample()
             distances[i] = np.interp(u, cdf, self._DISTANCES_M)
