@@ -13,7 +13,9 @@ set -euo pipefail
 
 ITERATIONS="${1:-100}"
 
-REPO="$(cd "$(dirname "$0")/../../../.." && pwd)"
+# Use pwd -W (git-bash) to get Windows-native path "C:/..." so child Python
+# and Java processes (native Windows binaries) can resolve the paths.
+REPO="$(cd "$(dirname "$0")/../../../.." && pwd -W)"
 SCENARIO_DIR="$REPO/matsim_scenarios/bavaria/output/kelheim_30km_100pct"
 CONFIG_PATH="$SCENARIO_DIR/kelheim_30km_100pct_config.xml"
 POPULATION_PATH="$REPO/matsim_scenarios/bavaria/output/populations_eqasim/population_10pct_kelheim30km.xml.gz"
