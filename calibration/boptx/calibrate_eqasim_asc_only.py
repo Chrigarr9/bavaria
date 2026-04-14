@@ -20,9 +20,11 @@ DiscreteModeChoice strategy weight to 1.0 (vs 0.05 in v1/v2). With lastIteration
 every agent gets fresh mode choice exactly once per evaluation — no warm-start
 noise floor. This gives a clean parameter response per eval.
 
-Initial values: v1 best (eval #188, obj=0.073419) — widest plausible ASC region.
-Bounds: ±0.75 around v1 best (wider than v2's ±0.5 because there are 4 fewer
-free parameters, so the optimizer has more room to explore ASC space).
+5-parameter variant: an earlier 4-param run (car/bike/walk/pt only) converged to
+obj=0.0868 but failed Gate A (car -9.2pp, car_passenger +8.4pp, pt -6.0pp).
+The optimizer pushed car and pt to their bounds trying to compensate for the
+frozen carPassenger.alpha_u=-1.4. This variant adds carPassenger as a 5th param
+and widens car/pt bounds accordingly.
 
 Usage:
     cd matsim_scenarios/bavaria/calibration/boptx
@@ -92,12 +94,16 @@ os.makedirs(WORK_DIR, exist_ok=True)
 #   walk.alpha_u=+1.5911  pt.alpha_u=-3.0000
 
 parameters = [
-    # --- ASCs: ±0.75 around v1 best ---
-    # (v1 best: car=-0.9415, bike=-1.3368, walk=+1.5911, pt=-3.0000)
-    ModeParameter("car.alpha_u",  bounds=(-1.69, -0.19), initial_value=-0.9415),
-    ModeParameter("bike.alpha_u", bounds=(-2.09, -0.59), initial_value=-1.3368),
-    ModeParameter("walk.alpha_u", bounds=( 0.84,  2.34), initial_value= 1.5911),
-    ModeParameter("pt.alpha_u",   bounds=(-3.75, -2.25), initial_value=-3.0000),
+    # --- 5-param variant (carPassenger included) ---
+    # 4-param run with DMC=1.0 failed Gate A: obj=0.0868 but car/pt hit bounds
+    # because car_passenger was frozen at -1.4 and model wanted it much lower.
+    # Widened bounds for car and pt; added carPassenger; kept bike/walk.
+    # Initial values from 4-param best (eval #127).
+    ModeParameter("car.alpha_u",          bounds=(-2.50,  1.00), initial_value=-0.1952),
+    ModeParameter("bike.alpha_u",         bounds=(-2.09, -0.59), initial_value=-1.5718),
+    ModeParameter("walk.alpha_u",         bounds=( 0.84,  2.34), initial_value= 1.4616),
+    ModeParameter("pt.alpha_u",           bounds=(-5.00, -1.50), initial_value=-3.7265),
+    ModeParameter("carPassenger.alpha_u", bounds=(-3.00,  0.00), initial_value=-1.4000),
     # betaTravelTime FROZEN at BavariaModeParameters.buildDefault() — NOT calibrated
 ]
 
