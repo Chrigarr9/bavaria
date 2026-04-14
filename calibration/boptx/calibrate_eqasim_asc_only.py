@@ -15,6 +15,11 @@ Why ASC-only: betaTravelTime values come from survey estimation and should not f
 during field calibration. Letting ASCs and betaTT vary simultaneously (as v2 did)
 risks masking bias by trading one against the other.
 
+DMC coverage: this variant uses kelheim_30km_1pct_asc_only_config.xml which sets
+DiscreteModeChoice strategy weight to 1.0 (vs 0.05 in v1/v2). With lastIteration=1,
+every agent gets fresh mode choice exactly once per evaluation — no warm-start
+noise floor. This gives a clean parameter response per eval.
+
 Initial values: v1 best (eval #188, obj=0.073419) — widest plausible ASC region.
 Bounds: ±0.75 around v1 best (wider than v2's ±0.5 because there are 4 fewer
 free parameters, so the optimizer has more room to explore ASC space).
@@ -50,8 +55,10 @@ THREADS = int(sys.argv[2]) if len(sys.argv) > 2 else 8
 os.environ["JAVA_TOOL_OPTIONS"] = "-Djava.awt.headless=true"
 
 # === Paths ===
+# Use the ASC-only config variant with DiscreteModeChoice weight=1.0 so every
+# agent is re-mode-chosen every eval (no 95% warm-start noise floor).
 SCENARIO_DIR = os.path.realpath("../../output/kelheim_30km_1pct")
-CONFIG_PATH = os.path.join(SCENARIO_DIR, "kelheim_30km_1pct_config.xml")
+CONFIG_PATH = os.path.join(SCENARIO_DIR, "kelheim_30km_1pct_asc_only_config.xml")
 JAR_PATH = os.path.realpath(
     "C:/matsim_cache_1pct/matsim.runtime.eqasim__83b63e4525913877d1368702e12255ef.cache"
     "/eqasim-java/bavaria/target/bavaria-1.5.0.jar"
