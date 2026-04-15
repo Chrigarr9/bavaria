@@ -45,13 +45,16 @@ echo "  Iterations:  $ITERATIONS"
 echo "  Calibrated ASCs from: $ASC_YAML"
 echo "  ASC args:    $ASC_ARGS"
 
-"$JAVA_BINARY" -Xmx40g -Djava.awt.headless=true \
+"$JAVA_BINARY" -Xmx20g -Djava.awt.headless=true \
   -cp "$JAR_PATH" org.eqasim.bavaria.RunSimulation \
   --config-path "$CONFIG_PATH" \
   --config:plans.inputPlansFile "$POPULATION_PATH" \
   --config:controler.outputDirectory "$OUTPUT_DIR" \
   --config:controler.lastIteration "$ITERATIONS" \
   --config:controler.overwriteFiles deleteDirectoryIfExists \
+  --config:controler.writeEventsInterval "$ITERATIONS" \
+  --config:controler.writePlansInterval "$ITERATIONS" \
+  --config:controler.writeTripsInterval 0 \
   --config:qsim.flowCapacityFactor 0.10 \
   --config:qsim.storageCapacityFactor 0.10 \
   --config:controler.createGraphsInterval 0 \
