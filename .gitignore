@@ -19,6 +19,7 @@ config_local_*.yml
 
 # Large Data Files
 *.p
+*.pkl
 *.pbf
 *.zip
 *.gz
@@ -30,9 +31,12 @@ export/
 # Pipeline logs
 *.log
 
-# Calibration intermediates
+# Calibration intermediates and outputs
 calibration/boptx/boptx-upstream/
-calibration/boptx/work/
+calibration/boptx/work*/
+calibration/boptx/outputs/
+calibration/boptx/diagnostics/
+calibration/boptx/*.p.bak
 
 # Data Folders (Raw data)
 data/bavaria/

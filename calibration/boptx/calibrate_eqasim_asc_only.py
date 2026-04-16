@@ -1,33 +1,72 @@
 """
 boptx ASC-only calibration for Bavaria 30 km eqasim pipeline.
 
-Forked from calibrate_eqasim_v2.py. Differences:
-  - 4 parameters only (car.alpha_u, bike.alpha_u, walk.alpha_u, pt.alpha_u).
-    betaTravelTime is FROZEN at BavariaModeParameters.buildDefault() values.
-  - Scenario population: raw eqasim synthesis (output/populations_eqasim/), NOT
-    the Kelheim-adapted permanent populations in output/populations/.
-  - Capacity factor bumped from 0.01 to 0.02 (minimum stable value for 1 % sample).
-  - Reference: reference_trips.csv (verified to match MiD 2017 Niederbayern within
-    1 pp on every mode, see docs/plans/2026-04-14-eqasim-drt-pipeline-design.md §3.3
-    and PDF Abbildung 22 in data/bavaria/42_mid2017_regionalbericht_bayern.pdf).
+v4 (2026-04-15): Car-reference + PT penalty pins + walk/bike betaTT
+-------------------------------------------------------------------
+Building on v3 (MiD Niederbayern proxy target, car as reference).
 
-Why ASC-only: betaTravelTime values come from survey estimation and should not float
-during field calibration. Letting ASCs and betaTT vary simultaneously (as v2 did)
-risks masking bias by trading one against the other.
+What v3 discovered (via mode_cache.csv analysis on the 100% demand-
+extraction run and BavariaPtUtilityEstimator source reading):
 
-DMC coverage: this variant uses kelheim_30km_1pct_asc_only_config.xml which sets
-DiscreteModeChoice strategy weight to 1.0 (vs 0.05 in v1/v2). With lastIteration=1,
-every agent gets fresh mode choice exactly once per evaluation — no warm-start
-noise floor. This gives a clean parameter response per eval.
+  The Bavaria pt utility estimator applies TWO Munich-calibrated
+  penalties that fire on ~100% of trips in rural Kelheim and are
+  structurally incompatible with the target:
+    - bavariaPt.onlyBus_u          = -1.416309  (trip has no rail leg)
+    - bavariaPt.betaDrivingPermit_u = -0.531426  (license holder)
+  Together they stack ~-1.95 utils onto every pt choice in the
+  30 km Kelheim buffer, invisible to any pt.alpha_u tuning. v3 sat
+  pt.alpha_u at -1.65 (not saturating bounds) because further
+  increases didn't move pt share enough to justify hurting other
+  modes — the gap wasn't closable with ASCs alone.
 
-5-parameter variant: an earlier 4-param run (car/bike/walk/pt only) converged to
-obj=0.0868 but failed Gate A (car -9.2pp, car_passenger +8.4pp, pt -6.0pp).
-The optimizer pushed car and pt to their bounds trying to compensate for the
-frozen carPassenger.alpha_u=-1.4. This variant adds carPassenger as a 5th param
-and widens car/pt bounds accordingly.
+  Separately, the pt/car travel time distribution (SwissRailRaptor
+  on the actual kelheim_30km_100pct transit schedule) shows median
+  pt is 5.6x slower than car across the buffer; at 10-20 km it's
+  6.3x slower. This is the real service-quality ceiling on pt share.
+
+v4 changes:
+  1. Pin onlyBus_u and betaDrivingPermit_u to 0.0 via CLI. These are
+     Munich artifacts that do not apply to the bus-only rural network.
+     Reclaims +1.95 utils on every license-holder pt choice without
+     any Java rebuild (ParameterDefinition.applyCommandLine supports
+     nested field paths reflectively).
+  2. Add walk.betaTravelTime_u_min and bike.betaTravelTime_u_min as
+     free parameters. v3 accepted walk shape and bike over-distance
+     as "structural." In reality, betaTT controls the slope of the
+     distance-vs-share curve. A steeper beta_walk sharpens the walk
+     drop-off (fixing 0.5-2 km over), a steeper beta_bike kills the
+     bike long-distance tail (fixing +10 pp at 5-50 km).
+  3. Widen pt.alpha_u bounds from (-5, +1.5) to (-3, +2) now that
+     the constant penalty stack is gone. v3's -1.65 optimum shifts
+     by ~+2 under the new baseline; (+2 upper) gives headroom.
+  4. Bump DE candidates 4 -> 8. 4 is too tight for the 6-dim problem;
+     initial sampling in 6D with 4 points is structurally under-
+     covered. 8 roughly doubles cold-start exploration.
+  5. Bump maximum_evaluations 300 -> 400. More generations, still
+     fits overnight (~5 min/eval x 400 = ~33 h ceiling, will usually
+     converge well before that).
+
+Known residuals the calibration STILL cannot fix (v4 scope):
+  - PT fare model is hardcoded Munich MVV (BavariaPtCostModel.java,
+    shortPrice=1.9, basePrice_h=8.0, zonal tables). Rural trips
+    fall through to ~EUR 24 for a 132-min bus trip, invisible to
+    CLI (not in BavariaCostParameters). Would need Java patch +
+    JAR rebuild. Not done in v4.
+  - Car fixed cost (0-500 m overshoot): same story, requires
+    BavariaCarCostModel.java patch.
+  - Single ASC still cannot fix car short-over AND long-under
+    simultaneously; car at 0 normalises this rather than solves it.
+
+DMC coverage: uses kelheim_30km_1pct_asc_only_config.xml with
+DiscreteModeChoice strategy weight 1.0 (vs 0.05 in v1/v2). With
+lastIteration=1 every agent gets fresh mode choice exactly once per eval
+— no warm-start noise floor.
 
 Usage:
     cd matsim_scenarios/bavaria/calibration/boptx
+    # regenerate the target pickle after any MiD source change:
+    python build_niederbayern_target.py
+    # run the calibration:
     python calibrate_eqasim_asc_only.py [parallelism] [threads]
 """
 
@@ -68,6 +107,22 @@ JAR_PATH = os.path.realpath(
 JAVA_BINARY = "C:/Users/VWAUCCY/dev/msf/.jdk/jdk-22.0.2+9/bin/java.exe"
 
 # === Objective ===
+# Calibration target: MiD 2017 Niederbayern proxy, derived via IPF from the
+# Bayern W10.5 cross-table (Wegelaenge x Hauptverkehrsmittel) reweighted to
+# Niederbayern marginals (aggregate mode split from Kurzreport + aggregate
+# distance distribution from Regionalbericht Tabelle 14).
+#
+# See build_niederbayern_target.py for provenance and regeneration.
+#
+# The shares_path pickle overrides the per-(mode, bin) reference shares used
+# by ModeShareObjective. The bins it provides are FIXED at 7 MiD distance
+# bands that are reachable by the Kelheim 30 km scenario:
+#   <0.5, 0.5-1, 1-2, 2-5, 5-10, 10-20, 20-50 km.
+# The 50-100 km and >100 km bands from the full MiD W12 set are dropped:
+# the scenario geography physically cannot produce those trips.
+# reference_trips.csv is still needed by ModeShareObjective for its initial
+# self.bounds computation (immediately overridden by the pickle) and for
+# filtering, but its per-bin shares are IGNORED in favour of the pickle.
 mode_share_objective = ModeShareObjective(
     "data/reference_trips.csv",
     dict(
@@ -75,6 +130,7 @@ mode_share_objective = ModeShareObjective(
         maximum_bin_count=20,
     ),
     objective="L1",
+    shares_path="data/niederbayern_proxy_shares.pkl",
 )
 
 penalty = LinearPenaltyCalculator(100.0, 10.0)
@@ -83,34 +139,47 @@ WORK_DIR = "work_asc_only"
 os.makedirs(WORK_DIR, exist_ok=True)
 
 # === Parameters ===
-# Bavaria survey defaults (BavariaModeParameters.buildDefault(), FROZEN here):
-#   car.betaTravelTime_u_min    = -0.042431
-#   bike.betaTravelTime_u_min   = -0.093485
-#   walk.betaTravelTime_u_min   = -0.162285
-#   pt.betaInVehicleTime_u_min  = -0.025501
+# Reference mode: car. car.alpha_u is FIXED AT 0 (not calibrated) and all
+# other ASCs express utility *relative to car*.
 #
-# v1 best (eval #188, obj=0.073419):
-#   car.alpha_u=-0.9415  bike.alpha_u=-1.3368
-#   walk.alpha_u=+1.5911  pt.alpha_u=-3.0000
-
+# Bavaria survey defaults (BavariaModeParameters.buildDefault()):
+#   car.betaTravelTime_u_min    = -0.042431   (FROZEN)
+#   bike.betaTravelTime_u_min   = -0.093485   (now a FREE param in v4)
+#   walk.betaTravelTime_u_min   = -0.162285   (now a FREE param in v4)
+#   pt.betaInVehicleTime_u_min  = -0.025501   (FROZEN; rare to tune)
+#
+# Why free the walk/bike betaTT in v4: they directly shape the distance-
+# vs-share curve. v3 with ASCs-only showed structural walk-over at
+# 0.5-2 km and bike-over at 5-50 km; steeper betaTT sharpens the
+# decay, flat betaTT extends it. Literature discrete-choice estimates
+# for walk betaTT range -0.10 to -0.25; bike -0.07 to -0.18. Bounds
+# straddle the Bavaria default generously in both directions.
+#
+# Widened pt.alpha_u bounds vs v3: (-5, +1.5) -> (-3, +2). With the
+# constant penalty stack (onlyBus_u + betaDrivingPermit_u) pinned to
+# zero, pt's baseline utility shifts up by ~1.95 utils, so v3's -1.65
+# optimum should land near +0.30 under the new baseline. (+2 upper
+# gives headroom; -3 lower retained for safety if the new baseline
+# overcorrects.)
 parameters = [
-    # --- 5-param variant (carPassenger included) ---
-    # 4-param run with DMC=1.0 failed Gate A: obj=0.0868 but car/pt hit bounds
-    # because car_passenger was frozen at -1.4 and model wanted it much lower.
-    # Widened bounds for car and pt; added carPassenger; kept bike/walk.
-    # Initial values from 4-param best (eval #127).
-    ModeParameter("car.alpha_u",          bounds=(-2.50,  1.00), initial_value=-0.1952),
-    ModeParameter("bike.alpha_u",         bounds=(-2.09, -0.59), initial_value=-1.5718),
-    ModeParameter("walk.alpha_u",         bounds=( 0.84,  2.34), initial_value= 1.4616),
-    ModeParameter("pt.alpha_u",           bounds=(-5.00, -1.50), initial_value=-3.7265),
-    ModeParameter("carPassenger.alpha_u", bounds=(-3.00,  0.00), initial_value=-1.4000),
-    # betaTravelTime FROZEN at BavariaModeParameters.buildDefault() — NOT calibrated
+    ModeParameter("bike.alpha_u",              bounds=(-4.00,  1.00), initial_value=-1.50),
+    ModeParameter("walk.alpha_u",              bounds=(-1.00,  4.00), initial_value= 1.50),
+    ModeParameter("pt.alpha_u",                bounds=(-3.00,  2.00), initial_value= 0.00),
+    ModeParameter("carPassenger.alpha_u",      bounds=(-4.00,  1.00), initial_value=-1.50),
+    ModeParameter("walk.betaTravelTime_u_min", bounds=(-0.30, -0.08), initial_value=-0.162285),
+    ModeParameter("bike.betaTravelTime_u_min", bounds=(-0.22, -0.05), initial_value=-0.093485),
+    # car.alpha_u: FIXED at 0.0 via CLI flag in evaluator (below)
+    # bavariaPt.onlyBus_u, bavariaPt.betaDrivingPermit_u: pinned to 0.0 via CLI
 ]
 
 problem = CalibrationProblem(mode_share_objective, parameters=parameters, penalty=penalty)
 
 # === Algorithm ===
-algorithm = DifferentialEvolutionAlgorithm(problem)
+# candidates=8 (up from DE default 4): with 6 free params, 4 initial
+# samples in 6D is structurally undersampled. 8 roughly doubles the
+# cold-start coverage without doubling per-generation cost (the DE
+# loop only runs what's needed per generation anyway).
+algorithm = DifferentialEvolutionAlgorithm(problem, candidates=8)
 
 # === Evaluator ===
 evaluator = MATSimEvaluator(
@@ -120,7 +189,15 @@ evaluator = MATSimEvaluator(
     settings=dict(
         class_path=JAR_PATH,
         main_class="org.eqasim.bavaria.RunSimulation",
-        memory="20g",
+        # Dropped from 20g -> 12g in v4b: 1pct sims have ~6k persons and
+        # peak at ~4 GB heap. 20 GB was wildly oversized and inflated the
+        # Windows process commit charge, which on this shared machine
+        # (~130 GB RAM but bounded pagefile) triggered intermittent
+        # OS-level kills every ~30-130 evals regardless of actual heap
+        # usage. 12g leaves slack for GC and outliers without puffing
+        # commit. Combined with the matsim.py _ping() retry patch, this
+        # should make 400-eval overnight runs reliable.
+        memory="12g",
         java=JAVA_BINARY,
         threads=THREADS,
         iterations=1,
@@ -133,14 +210,29 @@ evaluator = MATSimEvaluator(
             # Capacity factor: minimum stable for 1 % sample (existing config has 0.01 → too low)
             "--config:qsim.flowCapacityFactor",    "0.02",
             "--config:qsim.storageCapacityFactor", "0.02",
+            # Fix car ASC at 0 — car is the reference alternative, all other
+            # calibrated ASCs are utility deltas vs car. Overrides the Bavaria
+            # default of +0.40. Must be reapplied every eval since boptx
+            # generates --mode-choice-parameter flags only for the free params.
+            "--mode-choice-parameter:car.alpha_u", "0.0",
+            # Pin the Bavaria-specific pt penalty stack to ZERO. These are
+            # Munich-calibrated (bavariaPt.onlyBus_u fires when a pt trip
+            # has no rail leg — always true in rural Kelheim; betaDrivingPermit_u
+            # fires on all license-holding adults — ~95% of the population).
+            # Together they stacked -1.95 utils on every pt choice in v3
+            # and were invisible to pt.alpha_u. ParameterDefinition's
+            # applyCommandLine walks nested field paths reflectively so
+            # these work without a Java rebuild.
+            "--mode-choice-parameter:bavariaPt.onlyBus_u", "0.0",
+            "--mode-choice-parameter:bavariaPt.betaDrivingPermit_u", "0.0",
         ],
     ),
 )
 
 
 # === Logging tracker with per-eval mode share summary ===
-# MiD Niederbayern aggregate targets for sanity checking
-_MID = {"car": 0.535, "car_passenger": 0.158, "walk": 0.168, "bicycle": 0.069, "pt": 0.069}
+# MiD 2017 Niederbayern aggregate targets (Kurzreport Bayern p.13, Regierungsbezirk row)
+_MID = {"car": 0.54, "car_passenger": 0.16, "walk": 0.16, "bicycle": 0.07, "pt": 0.07}
 _MODES_ORDERED = ["car", "walk", "bicycle", "pt", "car_passenger"]
 
 
@@ -175,7 +267,7 @@ class LoggingTracker(Tracker):
             shares = self._mode_shares(ev.get_information())
 
             param_str = "  ".join(
-                f"{p.parameter.split('.')[-1]}={v:+.4f}"
+                f"{p.parameter}={v:+.4f}"
                 for p, v in zip(parameters, vals)
             )
             share_str = "  ".join(
@@ -204,14 +296,18 @@ class LoggingTracker(Tracker):
 
 # === Run ===
 print("=" * 70)
-print("Bavaria 30km eqasim ASC-only Calibration (MiD Niederbayern)")
+print("Bavaria 30km eqasim ASC + walk/bike betaTT Calibration v4")
 print("=" * 70)
 print(f"  Parallelism:  {PARALLELISM}")
 print(f"  Threads/eval: {THREADS}")
-print(f"  Hot-start:    v1 best (eval #188, obj=0.073419)")
-print(f"  Parameters ({len(parameters)}):")
+print(f"  DE candidates: 8   max_evals: 400")
+print(f"  Pinned via CLI:")
+print(f"    car.alpha_u                     = 0.0  (reference)")
+print(f"    bavariaPt.onlyBus_u             = 0.0  (was -1.416, Munich MVV artifact)")
+print(f"    bavariaPt.betaDrivingPermit_u   = 0.0  (was -0.531, Munich MVV artifact)")
+print(f"  Free parameters ({len(parameters)}):")
 for p in parameters:
-    print(f"    {p.parameter:45s}  init={p.initial_value:+.6f}  bounds={p.bounds}")
+    print(f"    {p.parameter:42s}  init={p.initial_value:+.6f}  bounds={p.bounds}")
 print(f"  Objective: MiD 2017 Niederbayern mode shares by distance band (L1, 5 modes)")
 print(f"  Equilibrium: deterministic (trip-based MNL, 1 iter, no reroute)")
 print("=" * 70)
@@ -221,5 +317,5 @@ tracker = LoggingTracker("optimization_asc_only.p")
 Loop(
     algorithm=algorithm,
     evaluator=evaluator,
-    maximum_evaluations=300,
+    maximum_evaluations=400,
 ).advance(callback=tracker)

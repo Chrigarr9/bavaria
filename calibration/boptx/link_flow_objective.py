@@ -22,8 +22,10 @@ class LinkFlowObjective:
         return 0
 
     def calculate(self, simulation_path):
-        # Read MATSim link volumes
-        links_path = "{}/output_links.csv.gz".format(simulation_path)
+        # Read MATSim link volumes (may have run-ID prefix)
+        import glob as _glob
+        matches = _glob.glob("{}/*output_links.csv.gz".format(simulation_path))
+        links_path = matches[0] if matches else "{}/output_links.csv.gz".format(simulation_path)
         try:
             df_sim = pd.read_csv(links_path, sep=";", usecols=["link", "vol_car"],
                                  dtype={"link": str})

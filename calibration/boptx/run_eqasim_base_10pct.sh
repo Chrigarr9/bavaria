@@ -23,9 +23,10 @@ OUTPUT_DIR="$REPO/outputs/eqasim-base-10pct"
 ASC_YAML="$REPO/matsim_scenarios/bavaria/calibration/boptx/calibrated_asc.yml"
 JAR_PATH="C:/matsim_cache_1pct/matsim.runtime.eqasim__83b63e4525913877d1368702e12255ef.cache/eqasim-java/bavaria/target/bavaria-1.5.0.jar"
 JAVA_BINARY="C:/Users/VWAUCCY/dev/msf/.jdk/jdk-22.0.2+9/bin/java.exe"
+PYTHON_BINARY="$REPO/matsim_scenarios/bavaria/.micromamba/python.exe"
 
 # Read calibrated ASCs from YAML and build --mode-choice-parameter flags
-ASC_ARGS=$(python -c "
+ASC_ARGS=$("$PYTHON_BINARY" -c "
 import yaml, sys
 with open('$ASC_YAML') as f:
     d = yaml.safe_load(f)
